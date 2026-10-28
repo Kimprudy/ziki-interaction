@@ -51,6 +51,8 @@ export const issueById = (id: string) => issues.find((issue) => issue.id === id)
 
 let nextId = 1;
 export const newId = () => nextId++;
+/** After restoring saved activity, keep new ids above the restored ones. */
+export const bumpIdPast = (max: number) => { nextId = Math.max(nextId, max + 1); };
 
 const sample = (actor: Actor, name: string, action: string, issueId: string, type: EventType): ActivityEntry => ({
   id: newId(), actor, name, action, issueId, type, when: 'Sample', sample: true,
@@ -64,6 +66,8 @@ export const initialActivity: ActivityEntry[] = [
   sample('System', 'Ziki', 'Moved to Prove: waiting for an independent tester', '#400', 'Status change'),
   sample('Agent', 'ASA3 Solver', 'Linked a pull request with the profile cache fix', '#400', 'Agent work'),
   sample('System', 'Ziki', 'Confirmed by two reviewers; moved to Authorize', '#388', 'Status change'),
+  sample('Agent', 'ASA3 Solver', 'Reproduced the report (first independent review)', '#405', 'Agent work'),
+  sample('Agent', 'Ziki Triager', 'Checked for duplicates: none found', '#405', 'Agent work'),
   sample('Human', 'Mina K.', 'Reported the issue with reproduction steps', '#405', 'Issue work'),
   sample('Human', 'Mina K.', 'Reported the issue with reproduction steps', '#388', 'Issue work'),
 ];
@@ -160,3 +164,30 @@ export const ranking = [
   { name: 'ASA3 Solver', type: 'Agent', role: 'Solver', points: 760, work: 'Fixes verified by testers', initials: 'AS', color: 'mint' },
   { name: 'Mina K.', type: 'Human', role: 'Reporter', points: 540, work: 'Confirmed issue reports', initials: 'MK', color: 'peach' },
 ];
+
+// #405: a filed report that needs a second independent reviewer (Ziki's “Confirm” step).
+export const report405 = {
+  reporter: 'Mina K.',
+  summary: 'Opening Saved items with nothing saved shows a blank white page with no explanation.',
+  steps: ['Sign in with an account that has no saved items', 'Open Saved items from the main menu', 'Wait for the page to load'],
+  expected: 'A short message explaining that nothing is saved yet, with a way to browse items.',
+  actual: 'A blank page. Some testers assumed the page had failed to load.',
+  checks: [
+    { label: 'Duplicate check · Ziki Triager', value: 'No duplicates. Closest match #377 is closed and about a different screen.' },
+    { label: 'First review · ASA3 Solver', value: 'Reproduced on Chrome and Safari with a new account.' },
+  ],
+};
+
+export const plan405: Plan = {
+  issueId: '#405',
+  agent: 'ASA3 Solver',
+  title: 'Add an empty state to Saved items',
+  steps: ['Detect when the saved list is empty', 'Show a short message with a “Browse items” button', 'Add a test for the empty and non-empty cases'],
+  estimate: '25 min',
+  reason: 'You confirmed the report, so the issue is ready for an agent to claim.',
+  revision: 1,
+  state: 'drafting',
+};
+
+/** A stable-looking fake commit hash for the simulated pull request. */
+export const commitFor = (issueId: string, round: number) => `${issueId.slice(1)}c${round}e9a`;

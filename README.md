@@ -12,27 +12,37 @@ This is not the Ziki production application. The Ziki dashboard requires sign-in
    - **Send decision & resume agent:** choose one of the agent's options (it marks the one it recommends) or write your own guidance.
    - **Take over:** you become the owner and the agent stops.
    - **Keep paused:** nothing changes; the item stays in your queue.
-4. **The agent responds (simulated).** After a decision, the agent resumes, drafts a plan based on what you chose, and sends that plan back to Inbox for approval. This is Ziki's *Authorize* step.
-5. **Approve or request changes.** Approving moves the issue to *Deliver*; the agent links a pull request and it moves to *Prove*. Requesting changes needs a comment; the agent revises the plan and asks again (revision 2, 3…).
+4. **The agent responds (simulated).** It resumes, drafts a plan based on what you chose, and sends it back for approval (Ziki's *Authorize* step). Request changes with a comment and it returns a revised plan.
+5. **Delivery and independent testing.** After you approve, the agent links a pull request (*Deliver*) and a separate tester agent verifies the exact commit (*Prove*).
+6. **The human approves the merge.** Ziki merges only after a person approves. Approve & merge closes the issue (*Merge*); Send back returns the fix to the agent, which is tested again before it comes back to you.
 
-Every step is written to Activity with its actor (Human, Agent or Ziki), and Console, Inbox, Issues and Activity all read from the same state, so they always agree.
+A notification appears when an agent finishes a step while you're in another section. Every step is written to Activity with its actor (Human, Agent or Ziki), and Console, Inbox, Issues and Activity all read from the same state, so they always agree.
+
+A second, shorter scenario covers Ziki's *Confirm* step: bug report #405 needs a second independent reviewer. Confirming it lets an agent claim the issue and send a plan; "Can't confirm" closes it with your reason.
 
 ## Sections
 
-- **Console:** overview only. Shows what's waiting on a human, what each agent is doing, and how many issues are at each lifecycle stage (click a stage to filter Issues).
-- **Inbox:** the human review queue. Items are grouped into *Needs your decision*, *With agents* and *Handled*, with an "All caught up" state when nothing is pending.
-- **Issues:** issue tracking through Ziki's lifecycle (Report → Confirm → Authorize → Deliver → Prove → Merge). Includes search and stage/status/category filters, a lifecycle stepper, owner and next step, and a work log built from that issue's actual Activity events. Filters are kept when you switch sections.
+- **Console:** overview only. A "Start here" walkthrough guides a first-time viewer through the main scenario, then shows what's waiting on a human, what each agent is doing, and how many issues are at each lifecycle stage (click a stage to filter Issues).
+- **Inbox:** the human review queue: agent questions, plan approvals, merge approvals and report reviews, grouped into *Needs your decision*, *With agents* and *Handled*, with an "All caught up" state.
+- **Issues:** issue tracking through Ziki's lifecycle (Report → Confirm → Authorize → Deliver → Prove → Merge). Includes search and stage/status/category filters, a lifecycle stepper, owner and next step, and a work log built from that issue's actual Activity events.
 - **Ranking:** sample contribution points for agents and humans by role (Solver, Reviewer, Reporter), following Ziki's rule that only validated work earns points.
 - **Activity:** an attributed audit trail with actor, event-type and search filters. Each entry links to its issue.
 
 ## What is real and what is simulated
 
-- **Real (in the browser):** navigation, filters, validation, every decision, cross-section state, and the Activity log for this session.
-- **Simulated:** the agent's follow-up steps (resuming, drafting and revising plans, linking a pull request). These run on short timers in your browser. No AI model or Ziki API is called.
+- **Real (in the browser):** navigation, filters, validation, every decision, cross-section state, notifications and the Activity log. Progress is saved in the browser's local storage, so a reload keeps your place; **Reset demo** in the banner starts over.
+- **Simulated:** agent and tester steps (resuming, drafting and revising plans, linking and updating a pull request, test verdicts). They run on short timers in your browser and carry on after a reload. No AI model, Ziki API or GitHub is called; commit hashes are made up.
 - **Sample:** issues, agents, evidence, points and the initial Activity entries (marked "Sample").
-- **Not included:** authentication, persistence (a reload resets everything), and any connection to Ziki or GitHub.
+- **Not included:** authentication, a server-side database, or any connection to Ziki or GitHub.
 
-A single banner at the top of every page states this.
+## Code layout
+
+- `src/data.ts`: sample data and the Ziki lifecycle.
+- `src/workspace.ts`: all state, human actions, simulated agent steps, saving to local storage, and the derived status every section reads.
+- `src/App.tsx`: the shell (navigation, banner, notifications).
+- `src/sections/`: one file per section; `InboxPanels.tsx` holds the panel for each kind of Inbox item.
+- `src/components.tsx`: shared UI pieces.
+- `tests/`: Playwright browser tests.
 
 ## Run locally
 
@@ -44,18 +54,7 @@ npm run dev        # http://localhost:5173
 npm run typecheck  # TypeScript only
 npm run build      # typecheck + production build
 npm run preview    # serve the build
+npm test           # build, serve and run the browser tests
 ```
 
-## Manual test checklist
-
-1. **Console:** two items wait on a human; the agents panel shows each agent's state; the stage strip shows counts per stage.
-2. **Escalation:** open the #388 agent question. Submitting with no option shows an error; choosing "Something else" requires written guidance.
-3. **Keep paused:** the banner changes, the item stays pending and the form remains.
-4. **Resume:** choose an option, optionally add a note, then send. The agent resumes, the item moves to *With agents*, and within a few seconds a plan appears for approval that reflects your choice and note.
-5. **Request changes:** an empty comment is rejected. After sending one, the agent revises and returns revision 2 with your feedback included.
-6. **Approve:** the plan moves to Deliver, then to Prove after the agent links a pull request.
-7. **Caught up:** approve #402 too. The Inbox badge disappears and both Inbox and Console show "All caught up".
-8. **Issues:** statuses, stages and owners match Inbox; the #388 work log lists every step; "Open in Inbox" appears while a decision is pending.
-9. **Take over:** use *Reset scenario* on #388, then *Take over*. You become the owner and Console shows the agent stopped.
-10. **Activity:** filter by actor (including System) and event type; issue links open that issue.
-11. **Responsive:** check desktop, tablet (1024px) and phone (390px / 320px) widths; the sidebar becomes a menu on small screens.
+`npm test` uses your installed Google Chrome locally. In CI (GitHub Actions, on every push and pull request) it installs Playwright's Chromium instead. The suite covers every decision path, the full lifecycle, notifications, reload persistence, the report scenario, cross-section links, text size and contrast in every section, console errors, and layout at 1024, 390 and 320px wide.
