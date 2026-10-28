@@ -112,7 +112,7 @@ function App() {
         <div className="nav-label">WORKSPACE</div>
         <nav className="main-nav" aria-label="Main navigation">
           {sections.map((item) => <button key={item.name} className={`nav-item ${section === item.name ? 'active' : ''}`} onClick={() => navigate(item.name)} aria-current={section === item.name ? 'page' : undefined}>
-            <span className="nav-icon" aria-hidden="true">{item.icon}</span><span>{item.name}</span>{item.name === 'Inbox' && <span className="nav-count">2</span>}
+            <span className="nav-icon" aria-hidden="true">{item.icon}</span><span>{item.name}</span>{item.name === 'Inbox' && <span className="nav-count">{(agentState === 'waiting' || agentState === 'paused' ? 1 : 0) + (approvalState === 'pending' ? 1 : 0)}</span>}
           </button>)}
         </nav>
         <div className="sidebar-bottom"><div className="human-control"><span className="control-icon">✓</span><div><strong>Human in control</strong><small>Agents wait for approval</small></div></div><div className="sidebar-profile"><span className="profile-avatar">JD</span><span><strong>Jordan D.</strong><small>Workspace owner</small></span><span className="profile-more">···</span></div></div>
@@ -126,9 +126,9 @@ function App() {
         </header>
 
         <main className="page-content" key={section}>
-          {section === 'Console' && <ConsoleView agentState={agentState} activity={activity} onNavigate={navigate} />}
+          {section === 'Console' && <ConsoleView agentState={agentState} approvalState={approvalState} onNavigate={navigate} />}
           {section === 'Inbox' && <InboxView selection={inboxSelection} setSelection={setInboxSelection} agentState={agentState} response={response} setResponse={setResponse} submittedResponse={submittedResponse} error={responseError} setError={setResponseError} onSubmit={submitResponse} onTakeOver={takeOver} onKeepPaused={keepPaused} onReset={resetEscalation} approvalState={approvalState} setApprovalState={setApprovalState} addActivity={addActivity} />}
-          {section === 'Issues' && <IssuesView agentState={agentState} response={response} setResponse={setResponse} submittedResponse={submittedResponse} error={responseError} setError={setResponseError} onSubmit={submitResponse} onTakeOver={takeOver} onKeepPaused={keepPaused} onReset={resetEscalation} issueFilter={issueFilter} setIssueFilter={setIssueFilter} />}
+          {section === 'Issues' && <IssuesView agentState={agentState} approvalState={approvalState} issueFilter={issueFilter} setIssueFilter={setIssueFilter} />}
           {section === 'Ranking' && <RankingView />}
           {section === 'Activity' && <ActivityView activity={activity} />}
         </main>
@@ -142,31 +142,34 @@ function PageHeader({ eyebrow, title, description, action }: { eyebrow?: string;
   return <div className="page-header"><div>{eyebrow && <div className="page-eyebrow">{eyebrow}</div>}<div className="page-title-row"><h1>{title}</h1>{action}</div><p>{description}</p></div></div>;
 }
 
-function ConsoleView({ agentState, activity, onNavigate }: { agentState: AgentState; activity: ActivityEntry[]; onNavigate: (section: Section) => void }) {
-  const attentionCount = (agentState === 'waiting' || agentState === 'paused' ? 1 : 0) + 1;
+function ConsoleView({ agentState, approvalState, onNavigate }: { agentState: AgentState; approvalState: 'pending' | 'approved' | 'changes'; onNavigate: (section: Section) => void }) {
+  const escalationPending = agentState === 'waiting' || agentState === 'paused';
+  const attentionCount = (escalationPending ? 1 : 0) + (approvalState === 'pending' ? 1 : 0);
+  const openIssues = 4;
   return <>
-    <PageHeader eyebrow="MONDAY, MAY 20 · SAMPLE WORKSPACE" title="Console" description="A clear view of your agents, their work, and where you’re needed." action={<button className="button button-outline" onClick={() => onNavigate('Activity')}><span aria-hidden="true">◷</span> View activity</button>} />
+    <PageHeader eyebrow="WORKSPACE OVERVIEW · SAMPLE DATA" title="Console" description="Monitor workspace health and agent states. Open a section to review the work behind each number." action={<span className="sample-label">DEMO WORKSPACE</span>} />
     <div className="metric-grid">
-      <MetricCard label="Needs your attention" value={String(attentionCount)} note="1 escalation · 1 approval" icon="!" tone="amber" onClick={() => onNavigate('Inbox')} />
-      <MetricCard label="Agents working" value="2" note="Sample status · no live agents" icon="✳" tone="blue" onClick={() => onNavigate('Issues')} />
-      <MetricCard label="Open issues" value="4" note="Across 3 sample categories" icon="◉" tone="indigo" onClick={() => onNavigate('Issues')} />
-      <MetricCard label="This week" value="12" note="Demonstration contributions" icon="↗" tone="green" onClick={() => onNavigate('Ranking')} />
+      <MetricCard label="Needs human review" value={String(attentionCount)} note="Escalations and approvals" icon="!" tone="amber" onClick={() => onNavigate('Inbox')} />
+      <MetricCard label="Agent states" value={agentState === 'takenOver' ? '1 owned' : agentState === 'resumed' ? '1 responded' : '1 paused'} note="One additional sample agent" icon="✳" tone="blue" onClick={() => onNavigate('Issues')} />
+      <MetricCard label="Tracked issues" value={String(openIssues)} note="Across the sample workspace" icon="◉" tone="indigo" onClick={() => onNavigate('Issues')} />
+      <MetricCard label="Contributors" value="4" note="Fictional ranking examples" icon="↗" tone="green" onClick={() => onNavigate('Ranking')} />
     </div>
     <div className="console-grid">
-      <section className="surface attention-card">
-        <div className="panel-heading"><div><span className="panel-kicker">HUMAN REVIEW</span><h2>Needs your attention</h2></div><button className="text-link" onClick={() => onNavigate('Inbox')}>Open inbox <span>→</span></button></div>
-        {agentState === 'waiting' || agentState === 'paused' ? <button className="attention-row" onClick={() => onNavigate('Inbox')}><span className="attention-icon urgent">!</span><span className="attention-content"><strong>Agent needs a product decision</strong><small>#388 · Google sign-in skips two-factor</small><span className="attention-meta">High priority <i /> Waiting on you</span></span><span className="row-arrow">›</span></button> : null}
-        {agentState === 'resumed' || agentState === 'takenOver' ? <button className="attention-row" onClick={() => onNavigate('Inbox')}><span className="attention-icon approval">✓</span><span className="attention-content"><strong>{agentState === 'takenOver' ? 'You took responsibility' : 'You responded to the agent'}</strong><small>#388 · Google sign-in skips two-factor</small><span className="attention-meta">{agentState === 'takenOver' ? 'Human-owned' : 'Simulated resume'} <i /> See handoff details</span></span><span className="row-arrow">›</span></button> : null}
-        {agentState === 'waiting' || agentState === 'paused' ? <button className="attention-row" onClick={() => onNavigate('Inbox')}><span className="attention-icon approval">✓</span><span className="attention-content"><strong>Review an agent proposal</strong><small>#402 · Update account recovery guidance</small><span className="attention-meta">Approval requested <i /> Ready to review</span></span><span className="row-arrow">›</span></button> : null}
+      <section className="surface agent-card console-agent-card">
+        <div className="panel-heading"><div><span className="panel-kicker">CURRENT STATES</span><h2>Agent overview</h2></div><span className="sample-label">ILLUSTRATIVE</span></div>
+        <AgentSummary name="Ziki Reviewer" role="Issue triage · #388" state={escalationPending ? (agentState === 'paused' ? 'Kept paused' : 'Waiting for input') : agentState === 'takenOver' ? 'Human-owned' : 'Guidance recorded · demo'} avatar="ZR" />
+        <AgentSummary name="ASA3 Solver" role="Implementation review · #400" state="Sample · standing by" avatar="AS" />
+        <p className="subtle-note">These are demonstration states, not connected or running agents.</p>
       </section>
-      <section className="surface agent-card">
-        <div className="panel-heading"><div><span className="panel-kicker">AGENT STATUS</span><h2>Your agents</h2></div><span className="sample-label">DEMO</span></div>
-        <AgentSummary name="Ziki Reviewer" role="Issue triage" state={agentState === 'waiting' || agentState === 'paused' ? 'Waiting for you' : agentState === 'takenOver' ? 'Human-owned' : 'Simulated resumed'} avatar="ZR" />
-        <AgentSummary name="ASA3 Solver" role="Implementation review" state="Sample · standing by" avatar="AS" />
-        <p className="subtle-note">Agent statuses are illustrative sample data, not live activity.</p>
+      <section className="surface console-shortcuts">
+        <div className="panel-heading"><div><span className="panel-kicker">WORKSPACE AREAS</span><h2>Go to a section</h2></div></div>
+        <button className="console-shortcut" onClick={() => onNavigate('Inbox')}><span className="shortcut-icon">▤</span><span><strong>Inbox</strong><small>{attentionCount ? `${attentionCount} item(s) need a decision` : 'No pending human decisions'}</small></span><span className="row-arrow">→</span></button>
+        <button className="console-shortcut" onClick={() => onNavigate('Issues')}><span className="shortcut-icon">◉</span><span><strong>Issues</strong><small>Track priority, status, category and owner</small></span><span className="row-arrow">→</span></button>
+        <button className="console-shortcut" onClick={() => onNavigate('Ranking')}><span className="shortcut-icon">↗</span><span><strong>Ranking</strong><small>Compare fictional sample contributions</small></span><span className="row-arrow">→</span></button>
+        <button className="console-shortcut" onClick={() => onNavigate('Activity')}><span className="shortcut-icon">◷</span><span><strong>Activity</strong><small>Review the attributed event timeline</small></span><span className="row-arrow">→</span></button>
       </section>
     </div>
-    <section className="surface recent-panel"><div className="panel-heading"><div><span className="panel-kicker">ATTRIBUTED SAMPLE EVENTS</span><h2>Recent activity</h2></div><button className="text-link" onClick={() => onNavigate('Activity')}>See all <span>→</span></button></div><ActivityList items={activity.slice(0, 3)} compact /></section>
+    <p className="console-disclaimer">Console is an overview only. Review decisions in Inbox, issue ownership in Issues, and actions in Activity.</p>
   </>;
 }
 
@@ -229,6 +232,7 @@ function EscalationPanel({ agentState, response, setResponse, submittedResponse,
 
 function ApprovalPanel({ state, setState, addActivity }: { state: 'pending' | 'approved' | 'changes'; setState: (state: 'pending' | 'approved' | 'changes') => void; addActivity: (actor: Actor, name: string, action: string, issue: string) => void }) {
   function update(next: 'approved' | 'changes') {
+    if (state === next) return;
     setState(next);
     addActivity('Human', 'Jordan D.', next === 'approved' ? 'Approved the sample account recovery proposal' : 'Requested changes to the sample account recovery proposal', '#402 · Account recovery guidance');
   }
@@ -241,18 +245,46 @@ function ApprovalPanel({ state, setState, addActivity }: { state: 'pending' | 'a
   </>;
 }
 
-function IssuesView({ agentState, response, setResponse, submittedResponse, error, setError, onSubmit, onTakeOver, onKeepPaused, onReset, issueFilter, setIssueFilter }: {
-  agentState: AgentState; response: string; setResponse: (value: string) => void; submittedResponse: string; error: string; setError: (value: string) => void;
-  onSubmit: (event: React.FormEvent<HTMLFormElement>) => void; onTakeOver: () => void; onKeepPaused: () => void; onReset: () => void;
-  issueFilter: string; setIssueFilter: (value: string) => void;
+function IssuesView({ agentState, approvalState, issueFilter, setIssueFilter }: {
+  agentState: AgentState;
+  approvalState: 'pending' | 'approved' | 'changes';
+  issueFilter: string;
+  setIssueFilter: (value: string) => void;
 }) {
-  const displayIssue = (issue: typeof issues[number]) => issue.id === '#388' && (agentState === 'waiting' || agentState === 'paused') ? 'Needs your input' : issue.id === '#388' && agentState === 'takenOver' ? 'Human-owned' : issue.id === '#388' && agentState === 'resumed' ? 'Simulated resumed' : issue.status;
-  const filteredIssues = issues.filter((issue) => issueFilter === 'All issues' || displayIssue(issue) === issueFilter);
+  const [categoryFilter, setCategoryFilter] = useState('All categories');
+  const [search, setSearch] = useState('');
+  const [selectedId, setSelectedId] = useState('#388');
+  const statusFor = (issue: typeof issues[number]) => {
+    if (issue.id === '#388') return agentState === 'waiting' ? 'Needs your input' : agentState === 'paused' ? 'Kept paused' : agentState === 'takenOver' ? 'Human-owned' : 'Guidance recorded';
+    if (issue.id === '#402') return approvalState === 'pending' ? 'Awaiting approval' : approvalState === 'approved' ? 'Approved (demo)' : 'Changes requested';
+    return issue.status;
+  };
+  const ownerFor = (issue: typeof issues[number]) => issue.id === '#388' && agentState === 'takenOver' ? 'Jordan D. (you)' : issue.agent;
+  const statuses = ['All statuses', 'Needs your input', 'Kept paused', 'Human-owned', 'Guidance recorded', 'Awaiting approval', 'Approved (demo)', 'Changes requested', 'In review', 'Open'];
+  const categories = ['All categories', ...Array.from(new Set(issues.map((issue) => issue.category)))];
+  const filteredIssues = issues.filter((issue) => {
+    const status = statusFor(issue);
+    const matchesStatus = issueFilter === 'All issues' || issueFilter === 'All statuses' || status === issueFilter || (issueFilter === 'In review' && status === 'In review') || (issueFilter === 'Open' && status === 'Open');
+    const matchesCategory = categoryFilter === 'All categories' || issue.category === categoryFilter;
+    const query = search.trim().toLowerCase();
+    const matchesSearch = !query || `${issue.id} ${issue.title} ${issue.category} ${ownerFor(issue)}`.toLowerCase().includes(query);
+    return matchesStatus && matchesCategory && matchesSearch;
+  });
+  const selectedIssue = issues.find((issue) => issue.id === selectedId);
   return <>
-    <PageHeader eyebrow="TRACK WORK AND OWNERSHIP" title="Issues" description="Sample issues with visible status, priority, and assigned owner." action={<span className="sample-label">SAMPLE ISSUES</span>} />
-    <div className="filter-row"><div className="filter-tabs">{['All issues', 'Needs your input', 'In review', 'Open'].map((filter) => <button key={filter} className={issueFilter === filter ? 'filter-active' : ''} onClick={() => setIssueFilter(filter === 'Needs your input' ? 'Needs your input' : filter)}>{filter}</button>)}</div><span className="table-caption">{filteredIssues.length} sample issues</span></div>
-    <section className="surface issue-table-wrap"><table className="issue-table"><thead><tr><th>ISSUE</th><th>STATUS</th><th>PRIORITY</th><th>ASSIGNED TO</th></tr></thead><tbody>{filteredIssues.map((issue) => <tr key={issue.id} className={issue.id === '#388' ? 'featured-issue-row' : ''}><td><div className="issue-cell"><span className="issue-cell-id">{issue.id}</span><strong>{issue.title}</strong><small>{issue.category}</small></div></td><td><span className={`table-status ${issue.id === '#388' ? agentState === 'takenOver' ? 'human-status' : agentState === 'resumed' ? 'resumed-status' : 'waiting-status' : issue.status === 'Open' ? 'open-status' : issue.status === 'Approval needed' ? 'approval-status' : 'review-status'}`}>{displayIssue(issue)}</span></td><td><span className={`priority-cell ${issue.priority.toLowerCase()}`}><i />{issue.priority}</span></td><td><span className="table-agent"><span className="mini-agent-avatar">{issue.id === '#388' && agentState === 'takenOver' ? 'JD' : issue.agent === 'ASA3 Solver' ? 'AS' : issue.agent === 'Unassigned' ? '—' : 'ZR'}</span>{issue.id === '#388' && agentState === 'takenOver' ? 'Jordan D.' : issue.agent}</span></td></tr>)}</tbody></table></section>
-    <div className="issue-focus-layout"><section className="surface issue-focus-intro"><span className="panel-kicker">SELECTED ISSUE · #388</span><h2>Human-agent escalation</h2><p>The issue requiring a decision is shown below. The same handoff is available from the Inbox.</p><div className="focus-mini-stats"><span><b>Priority</b>High</span><span><b>Status</b>{displayIssue(issues[0])}</span><span><b>Owner</b>{agentState === 'takenOver' ? 'Jordan D.' : 'Ziki Reviewer'}</span></div></section><section className="surface issue-focus-detail"><EscalationPanel agentState={agentState} response={response} setResponse={setResponse} submittedResponse={submittedResponse} error={error} setError={setError} onSubmit={onSubmit} onTakeOver={onTakeOver} onKeepPaused={onKeepPaused} onReset={onReset} /></section></div>
+    <PageHeader eyebrow="ISSUE TRACKING" title="Issues" description="Track status, priority, category and ownership. Select an issue to inspect its current state and next step." action={<span className="sample-label">SAMPLE ISSUES</span>} />
+    <div className="issue-controls">
+      <label className="issue-search-label">Search issues<input aria-label="Search issues" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search title, ID, owner…" /></label>
+      <label> Status <select aria-label="Filter by status" value={issueFilter} onChange={(event) => setIssueFilter(event.target.value)}>{statuses.map((status) => <option key={status} value={status}>{status}</option>)}</select></label>
+      <label> Category <select aria-label="Filter by category" value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>{categories.map((category) => <option key={category} value={category}>{category}</option>)}</select></label>
+      <span className="table-caption">{filteredIssues.length} of {issues.length} issues</span>
+    </div>
+    <section className="surface issue-table-wrap"><table className="issue-table"><thead><tr><th>ISSUE</th><th>STATUS</th><th>PRIORITY</th><th>OWNER</th></tr></thead><tbody>{filteredIssues.map((issue) => {
+      const status = statusFor(issue);
+      const statusClass = status === 'Needs your input' || status === 'Kept paused' || status === 'Awaiting approval' ? 'waiting-status' : status === 'Human-owned' ? 'human-status' : status === 'Guidance recorded' || status === 'Approved (demo)' ? 'resumed-status' : status === 'Open' ? 'open-status' : status === 'Changes requested' ? 'approval-status' : 'review-status';
+      return <tr key={issue.id} className={selectedId === issue.id ? 'featured-issue-row selected-issue-row' : ''}><td><button className="issue-select-button" onClick={() => setSelectedId(issue.id)} aria-pressed={selectedId === issue.id}><span className="issue-cell"><span className="issue-cell-id">{issue.id}</span><strong>{issue.title}</strong><small>{issue.category}</small></span></button></td><td><span className={`table-status ${statusClass}`}>{status}</span></td><td><span className={`priority-cell ${issue.priority.toLowerCase()}`}><i />{issue.priority}</span></td><td><span className="table-agent"><span className="mini-agent-avatar">{ownerFor(issue).startsWith('Jordan') ? 'JD' : issue.agent === 'ASA3 Solver' ? 'AS' : issue.agent === 'Unassigned' ? '—' : 'ZR'}</span>{ownerFor(issue)}</span></td></tr>;
+    })}</tbody></table>{filteredIssues.length === 0 && <div className="issues-empty"><strong>No matching issues</strong><span>Try another status, category or search term.</span><button className="button button-outline" onClick={() => { setIssueFilter('All statuses'); setCategoryFilter('All categories'); setSearch(''); }}>Clear filters</button></div>}</section>
+    {selectedIssue && <section className="surface issue-inspector"><div className="issue-inspector-heading"><div><span className="panel-kicker">ISSUE DETAILS · {selectedIssue.id}</span><h2>{selectedIssue.title}</h2></div><span className={`table-status ${statusFor(selectedIssue) === 'Human-owned' ? 'human-status' : statusFor(selectedIssue) === 'Needs your input' || statusFor(selectedIssue) === 'Awaiting approval' || statusFor(selectedIssue) === 'Kept paused' ? 'waiting-status' : 'review-status'}`}>{statusFor(selectedIssue)}</span></div><div className="issue-detail-grid"><div><small>Priority</small><strong>{selectedIssue.priority}</strong></div><div><small>Category</small><strong>{selectedIssue.category}</strong></div><div><small>Owner</small><strong>{ownerFor(selectedIssue)}</strong></div><div><small>Next step</small><strong>{selectedIssue.id === '#388' ? agentState === 'takenOver' ? 'Human owner follows up outside this demo' : agentState === 'resumed' ? 'Guidance receipt is saved in this browser session' : 'Review the agent question in Inbox' : selectedIssue.id === '#402' ? approvalState === 'pending' ? 'Review the proposal in Inbox' : 'Approval outcome recorded locally' : selectedIssue.status === 'Open' ? 'Triage and assign an owner' : 'Continue issue review'}</strong></div></div><p className="issue-inspector-note">Issue status mirrors the local Inbox demo state. No real tracker is connected.</p></section>}
   </>;
 }
 
@@ -264,16 +296,30 @@ function RankingView() {
     { place: '04', name: 'Mina K.', type: 'Sample human', points: '540', work: '3 issue reports', initials: 'MK', color: 'peach' },
   ];
   return <>
-    <PageHeader eyebrow="CONTRIBUTIONS · DEMONSTRATION DATA" title="Ranking" description="A sample view of human and agent contributions. These figures are illustrative, not live scores." action={<span className="period-chip">This week <span>⌄</span></span>} />
+    <PageHeader eyebrow="CONTRIBUTIONS · DEMONSTRATION DATA" title="Ranking" description="A sample view of human and agent contributions. These figures are illustrative, not live scores." action={<span className="period-chip">Sample period · This week</span>} />
     <div className="ranking-summary"><div className="surface rank-highlight"><span className="rank-cup">↗</span><div><small>TOP SAMPLE CONTRIBUTOR</small><strong>Ziki Reviewer</strong><span>1,240 demonstration points</span></div><span className="rank-place">#1</span></div><div className="surface rank-highlight"><span className="rank-cup human-cup">✦</span><div><small>HUMAN CONTRIBUTIONS</small><strong>1,520 points</strong><span>Across sample decisions and reports</span></div></div></div>
     <section className="surface ranking-table"><div className="panel-heading"><div><span className="panel-kicker">NORTHSTAR STUDIO</span><h2>Contribution board</h2></div><span className="sample-label">SAMPLE DATA</span></div>{ranking.map((person) => <div className="ranking-row" key={person.place}><span className="ranking-place">{person.place}</span><span className={`ranking-avatar ${person.color}`}>{person.initials}</span><span className="ranking-person"><strong>{person.name}</strong><small>{person.type} · {person.work}</small></span><span className="ranking-points"><b>{person.points}</b><small>points</small></span></div>)}<div className="ranking-footnote">Points and rankings are fictional demonstration data and do not reflect actual Ziki activity.</div></section>
   </>;
 }
 
 function ActivityView({ activity }: { activity: ActivityEntry[] }) {
+  const [actorFilter, setActorFilter] = useState('All actors');
+  const [query, setQuery] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('All events');
+  const filteredActivity = activity.filter((item) => {
+    const actorMatch = actorFilter === 'All actors' || item.actor === actorFilter;
+    const category = item.action.toLowerCase().includes('approv') || item.action.toLowerCase().includes('proposal') || item.action.toLowerCase().includes('changes') ? 'Approvals' : item.action.toLowerCase().includes('paused') || item.action.toLowerCase().includes('take responsibility') || item.action.toLowerCase().includes('escalation') || item.action.toLowerCase().includes('responded') ? 'Human handoff' : 'Issue work';
+    const categoryMatch = categoryFilter === 'All events' || category === categoryFilter;
+    const searchMatch = !query.trim() || `${item.name} ${item.action} ${item.issue}`.toLowerCase().includes(query.trim().toLowerCase());
+    return actorMatch && categoryMatch && searchMatch;
+  });
   return <>
-    <PageHeader eyebrow="ATTRIBUTED AUDIT TRAIL" title="Activity" description="A sample timeline that distinguishes human decisions from simulated agent actions." action={<span className="activity-counter"><span /> Local demo feed</span>} />
-    <div className="activity-layout"><section className="surface activity-feed"><div className="feed-heading"><div><span className="panel-kicker">WORKSPACE TIMELINE</span><h2>Recent events</h2></div><span className="sample-label">SAMPLE + LOCAL ACTIONS</span></div><ActivityList items={activity} /></section><aside className="activity-aside"><section className="surface attribution-card"><span className="panel-kicker">CLEAR ATTRIBUTION</span><h2>Know who did what</h2><div className="legend-row"><span className="actor-mark agent-mark">✳</span><span><strong>Agent action</strong><small>Clearly labeled as sample or simulated.</small></span></div><div className="legend-row"><span className="actor-mark human-mark">JD</span><span><strong>Human action</strong><small>Choices you made in this browser session.</small></span></div><p>Activity entries are local demonstration records. They are not streamed from a live system.</p></section><section className="surface feed-stats"><span className="panel-kicker">THIS SESSION · DEMO</span><div><strong>{activity.filter((item) => item.when.startsWith('Just now')).length}</strong><span>local human actions</span></div><div><strong>{activity.filter((item) => item.actor === 'Agent').length}</strong><span>sample agent entries</span></div></section></aside></div>
+    <PageHeader eyebrow="ATTRIBUTED AUDIT TRAIL" title="Activity" description="Follow the timeline of sample agent events and the decisions made in this browser session." action={<span className="activity-counter"><span /> Local demo feed</span>} />
+    <section className="surface activity-feed activity-feed-full"><div className="feed-heading"><div><span className="panel-kicker">WORKSPACE TIMELINE</span><h2>Recent events</h2><p className="activity-feed-description">Every entry names the actor, action, affected issue and whether it is sample or local.</p></div><span className="sample-label">SAMPLE + LOCAL</span></div>
+      <div className="activity-filters"><label>Search timeline<input aria-label="Search activity" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search actor, action or issue…" /></label><label>Actor<select aria-label="Filter by actor" value={actorFilter} onChange={(event) => setActorFilter(event.target.value)}><option>All actors</option><option>Human</option><option>Agent</option><option>System</option></select></label><label>Event type<select aria-label="Filter by event type" value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option>All events</option><option>Human handoff</option><option>Approvals</option><option>Issue work</option></select></label><span className="table-caption">{filteredActivity.length} events</span></div>
+      <ActivityList items={filteredActivity} />
+    </section>
+    <p className="activity-disclaimer">Initial entries are fictional sample events. New human actions are recorded locally and disappear when the page reloads. Nothing is streamed from a live system.</p>
   </>;
 }
 
