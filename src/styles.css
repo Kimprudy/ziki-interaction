@@ -78,7 +78,9 @@ body{ background: #f5f8fc; color: var(--ziki-ink); }
 .nav-item:hover{ background: #f5f8fd; transform: translateX(1px); }
 .nav-item.active{ background: #edf4ff; color: #2e6ec0; box-shadow: inset 3px 0 0 #4a86d5; }
 .topbar{ background: rgb(255 255 255 / 94%); border-bottom: 1px solid #e8eef6; backdrop-filter: blur(12px); }
-.topbar-breadcrumb strong{ color: #2f6fbd; }
+.topbar-breadcrumb strong{ color: var(--ziki-ink-strong, #0b1733); }
+.crumb-brand { color: #2864d7; font: 800 14px Manrope, sans-serif; letter-spacing: -.2px; }
+.crumb-slash { color: #9aa6b8; }
 .page-content{ max-width: 1560px; }
 .page-header{ padding: 2px 0 20px; border-bottom: 1px solid #e7edf5; }
 .page-header h1{ font-size: clamp(24px, 2.1vw, 30px); letter-spacing: -.8px; }

@@ -234,7 +234,7 @@ function App() {
       <div className="main-column">
         <header className="topbar">
           <button className="mobile-menu" aria-label="Open navigation" onClick={() => setMobileNavOpen(true)}>☰</button>
-          <div className="topbar-breadcrumb"><strong>{section}</strong></div>
+          <div className="topbar-breadcrumb"><span className="crumb-brand">Ziki</span><span className="crumb-slash" aria-hidden="true">/</span><strong aria-current="page">{section}</strong></div>
           <div className="topbar-right"><span className="top-avatar">JD</span></div>
         </header>
         <div className="prototype-banner" role="note">
