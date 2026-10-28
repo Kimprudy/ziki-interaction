@@ -209,10 +209,6 @@ function App() {
           <span className="brand-word">ziki</span>
           <span className="demo-tag">PROTOTYPE</span>
         </div>
-        <div className="workspace-switcher">
-          <span className="workspace-avatar">N</span>
-          <span className="workspace-copy"><strong>Northstar Studio</strong><small>Sample workspace</small></span>
-        </div>
         <div className="nav-label">WORKSPACE</div>
         <nav className="main-nav" aria-label="Main navigation">
           {sections.map((item) => (
@@ -238,7 +234,7 @@ function App() {
       <div className="main-column">
         <header className="topbar">
           <button className="mobile-menu" aria-label="Open navigation" onClick={() => setMobileNavOpen(true)}>☰</button>
-          <div className="topbar-breadcrumb"><span>Northstar Studio</span><span className="crumb-slash">/</span><strong>{section}</strong></div>
+          <div className="topbar-breadcrumb"><strong>{section}</strong></div>
           <div className="topbar-right"><span className="top-avatar">JD</span></div>
         </header>
         <div className="prototype-banner" role="note">
@@ -769,7 +765,7 @@ function RankingView() {
       <div className="surface rank-highlight"><span className="rank-cup human-cup" aria-hidden="true">✦</span><div><small>HUMAN CONTRIBUTIONS</small><strong>{humanPoints.toLocaleString()} points</strong><span>Reports and review verdicts</span></div></div>
     </div>
     <section className="surface ranking-table" aria-labelledby="board-heading">
-      <div className="panel-heading"><div><span className="panel-kicker">NORTHSTAR STUDIO · SAMPLE PERIOD</span><h2 id="board-heading">Contribution board</h2></div></div>
+      <div className="panel-heading"><div><span className="panel-kicker">SAMPLE PERIOD</span><h2 id="board-heading">Contribution board</h2></div></div>
       {ranking.map((person, index) => {
         const percent = Math.round((person.points / top) * 100);
         return (
