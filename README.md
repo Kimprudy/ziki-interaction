@@ -12,11 +12,11 @@ The improvement is a clear, attributed human handoff. The paused agent explains 
 
 ## Application sections
 
-- **Console:** sample overview metrics, statuses, attention items, and recent attributed events. Metric cards and attention items navigate to relevant sections.
+- **Console:** workspace-level sample metrics, current agent states, and navigation shortcuts. Review queues and the event timeline live in their dedicated sections.
 - **Inbox:** a priority-ordered sample escalation and an approval request. Selecting an item opens its details. The escalation offers response, takeover, and keep-paused choices; the approval request has local approve and request-changes actions.
-- **Issues:** sample issues with status, priority, category, and assigned agent or human. Status filters work, and the #388 handoff is available directly below the list.
+- **Issues:** an issue tracker with searchable issues, working status/category filters, selectable rows, and a focused detail inspector. Status and ownership mirror local Inbox decisions; the escalation form is not duplicated here.
 - **Ranking:** clearly labeled fictional sample contribution points for humans and agents.
-- **Activity:** an attributed sample timeline. Actions made in Inbox or Issues are added to the local feed and distinguish human actions from agent sample events.
+- **Activity:** a timeline-first event log with actor, event-type, and search filters. Human actions made in Inbox are recorded locally once; initial agent/human entries are explicitly fictional sample events.
 
 The sidebar navigation is persistent on desktop and opens as a menu on small screens.
 
@@ -62,17 +62,22 @@ npm run preview
 
 ## Manual test checklist
 
-1. **Console:** confirm overview metrics, two attention items, sample agent statuses, and recent activity are shown. Click an attention item or metric and confirm it navigates to the corresponding section.
-2. **Navigation:** visit Console, Inbox, Issues, Ranking, and Activity. Confirm each section has its own content. At a narrow viewport, open and close the sidebar menu.
+1. **Console:** confirm the overview metrics, agent states, and section shortcuts are shown without embedding the Inbox queue or Activity timeline.
+2. **Navigation:** visit Console, Inbox, Issues, Ranking, and Activity. Confirm each section has a distinct purpose. At a narrow viewport, open and close the sidebar menu.
 3. **Inbox escalation:** select the #388 item. Confirm the paused status, issue metadata, assigned agent, task, attempted steps, blocker, and decision question are clear.
 4. **Empty response:** submit an empty or whitespace-only response. Confirm validation appears and the agent stays paused.
 5. **Respond and resume:** enter guidance and submit. Confirm the response receipt, simulated (not real) resumed state, and human-attributed Activity entry.
 6. **Take over:** reload to reset, then take over the escalation. Confirm human ownership and attribution; no agent completion is implied.
 7. **Keep paused:** reload to reset, choose Keep paused, and confirm the paused status and response/takeover actions remain available.
 8. **Approval:** open the second Inbox item and try both Approve proposal and Request changes. Confirm the displayed result and corresponding human Activity event.
-9. **Issues:** verify all issue rows and metadata. Try the All issues, Needs your input, In review, and Open filters; check that the displayed rows change.
+9. **Issues:** verify issue rows, select different rows to update the inspector, search by ID/title/owner, and try status and category filters. Confirm #388 and #402 statuses mirror Inbox decisions.
 10. **Ranking:** verify human and agent contributions are explicitly labeled sample data.
-11. **Activity:** confirm actor labels differentiate agent sample events and human actions, and that local actions appear in the feed.
+11. **Activity:** filter by actor and event type, search for an issue or action, and confirm local human actions appear once while initial entries remain labeled as sample data.
 12. **Responsive layout:** check the app around desktop, tablet, and phone widths; confirm navigation, cards, actions, and horizontally scrollable issue table remain usable.
 
 The project build can be checked with `npm run build`.
+
+
+## Latest section-separation update
+
+Console is now an overview and navigation hub only. Inbox owns human decisions and approvals. Issues owns tracking, filters, ownership and details without duplicating the escalation form. Ranking remains fictional sample contribution data. Activity is a filterable, timeline-first audit view. No backend or live Ziki integration was added.
