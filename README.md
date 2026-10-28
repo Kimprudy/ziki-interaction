@@ -1,83 +1,61 @@
 # Ziki Human-Agent Interaction Prototype
 
-A local React + TypeScript + Vite prototype that expands the earlier paused-agent handoff into a small, navigable workspace. It demonstrates a human-in-control escalation experience inside an app shell with Console, Inbox, Issues, Ranking, and Activity sections.
+A React + TypeScript + Vite prototype of what happens in a Ziki workspace when an AI agent pauses and needs a person: the agent explains what it was doing and why it stopped, the person decides, and the agent visibly carries that decision forward.
 
-This is a new prototype, not the original Ziki production application. The Ziki dashboard requires authentication, and this project has no access to its private source, APIs, data, or backend. The public Ziki pages and the Ziki for Humans activity page informed the broad interaction direction; exact original colors, spacing, typography, and application behavior are not claimed. The dashboard uses sample data and a consistent blue-and-white visual system.
+This is not the Ziki production application. The Ziki dashboard requires sign-in, and this project has no access to its source, APIs or data. The issue lifecycle, roles and points model follow the public description on [ziki.dev](https://ziki.dev/); colours and type follow the public site (Manrope / DM Sans, `#2864d7` blue on white). All data is fictional and all agent behaviour is simulated in the browser.
 
-## User problem and proposed improvement
+## The interaction
 
-When an agent reaches an ambiguous product or policy decision, people need to understand what the agent is doing, why it is blocked, and what will happen if they respond. Quietly guessing or proceeding would undermine user control and trust.
+1. **An agent pauses.** Ziki Reviewer was tracing a sign-in bug (#388) and found that the intended security policy isn't written down. Rather than choose a security rule itself, it pauses and escalates to the workspace owner.
+2. **The human gets context.** In Inbox the escalation shows what the agent was doing, the steps it tried, why it needs a person, the evidence it collected (reproduction, code path, risk, confidence) and a direct question.
+3. **The human decides.** Each choice states its consequence before you pick it:
+   - **Send decision & resume agent:** choose one of the agent's options (it marks the one it recommends) or write your own guidance.
+   - **Take over:** you become the owner and the agent stops.
+   - **Keep paused:** nothing changes; the item stays in your queue.
+4. **The agent responds (simulated).** After a decision, the agent resumes, drafts a plan based on what you chose, and sends that plan back to Inbox for approval. This is Ziki's *Authorize* step.
+5. **Approve or request changes.** Approving moves the issue to *Deliver*; the agent links a pull request and it moves to *Prove*. Requesting changes needs a comment; the agent revises the plan and asks again (revision 2, 3…).
 
-The improvement is a clear, attributed human handoff. The paused agent explains its current task and attempted steps, names its blocker, and asks a direct question. The person can provide guidance and simulate resuming, take responsibility, or leave the agent paused. Attention items are surfaced in Inbox, issue ownership and priority are visible in Issues, and human choices are distinguished from sample agent events in Activity.
+Every step is written to Activity with its actor (Human, Agent or Ziki), and Console, Inbox, Issues and Activity all read from the same state, so they always agree.
 
-## Application sections
+## Sections
 
-- **Console:** workspace-level sample metrics, current agent states, and navigation shortcuts. Review queues and the event timeline live in their dedicated sections.
-- **Inbox:** a priority-ordered sample escalation and an approval request. Selecting an item opens its details. The escalation offers response, takeover, and keep-paused choices; the approval request has local approve and request-changes actions.
-- **Issues:** an issue tracker with searchable issues, working status/category filters, selectable rows, and a focused detail inspector. Status and ownership mirror local Inbox decisions; the escalation form is not duplicated here.
-- **Ranking:** clearly labeled fictional sample contribution points for humans and agents.
-- **Activity:** a timeline-first event log with actor, event-type, and search filters. Human actions made in Inbox are recorded locally once; initial agent/human entries are explicitly fictional sample events.
+- **Console:** overview only. Shows what's waiting on a human, what each agent is doing, and how many issues are at each lifecycle stage (click a stage to filter Issues).
+- **Inbox:** the human review queue. Items are grouped into *Needs your decision*, *With agents* and *Handled*, with an "All caught up" state when nothing is pending.
+- **Issues:** issue tracking through Ziki's lifecycle (Report → Confirm → Authorize → Deliver → Prove → Merge). Includes search and stage/status/category filters, a lifecycle stepper, owner and next step, and a work log built from that issue's actual Activity events. Filters are kept when you switch sections.
+- **Ranking:** sample contribution points for agents and humans by role (Solver, Reviewer, Reporter), following Ziki's rule that only validated work earns points.
+- **Activity:** an attributed audit trail with actor, event-type and search filters. Each entry links to its issue.
 
-The sidebar navigation is persistent on desktop and opens as a menu on small screens.
+## What is real and what is simulated
 
-## Escalation interaction flow
+- **Real (in the browser):** navigation, filters, validation, every decision, cross-section state, and the Activity log for this session.
+- **Simulated:** the agent's follow-up steps (resuming, drafting and revising plans, linking a pull request). These run on short timers in your browser. No AI model or Ziki API is called.
+- **Sample:** issues, agents, evidence, points and the initial Activity entries (marked "Sample").
+- **Not included:** authentication, persistence (a reload resets everything), and any connection to Ziki or GitHub.
 
-1. Open **Inbox** and select the high-priority agent question, or open **Issues** and review issue **#388**.
-2. Confirm the sample issue's priority, status, assigned agent, current task, attempted steps, blocker, and direct decision question. The initial state shows that the agent is paused and waiting for human input.
-3. Choose an action:
-   - **Respond and resume:** a blank or whitespace-only response is rejected and the agent remains paused. A non-empty response is shown in the interface, the status becomes **Simulated: response received**, and a human-attributed local event appears in Activity. No real agent resumes.
-   - **Take over:** the issue is marked **Human-owned**, the assignment changes to Jordan D. in the prototype, and Activity records the human action. No agent action is triggered.
-   - **Keep paused:** the issue stays paused and the form remains available for a later response or takeover.
-4. Use **Reset demo state** to return the escalation to its initial waiting state. Local Activity entries remain visible for the current page session.
-5. In Inbox, select the approval item and choose **Approve proposal** or **Request changes** to see its local outcome and Activity attribution.
-
-## Sample data and limitations
-
-- All issue, ranking, agent, and initial activity content is fictional demonstration data. Times and statuses are not real-time.
-- Interaction state and response text live only in browser memory. Reloading resets the prototype; there is no database or durable persistence.
-- Respond/resume, takeover, keep paused, issue approval, filters, and navigation are local demonstration behaviors only.
-- Responses are not sent to Ziki or any agent; approvals do not publish or change actual issue content.
-- The prototype does not authenticate users, access Ziki private APIs, read dashboard data, run agents, or control any production system.
-- Visual styling is an original approximation informed by public-facing references, not a verified reproduction of Ziki's precise design. No external screenshots were supplied for pixel-matching.
+A single banner at the top of every page states this.
 
 ## Run locally
 
-Requirements: Node.js 20.19+ or 22.12+ recommended, and npm.
-
-From the project directory:
+Requires Node.js 20.19+ or 22.12+.
 
 ```bash
 npm install
-npm run dev
-```
-
-Open the local URL printed by Vite (normally `http://localhost:5173`). The project dependencies are declared in `package.json`; no additional backend or service setup is needed.
-
-To create and serve a production build locally:
-
-```bash
-npm run build
-npm run preview
+npm run dev        # http://localhost:5173
+npm run typecheck  # TypeScript only
+npm run build      # typecheck + production build
+npm run preview    # serve the build
 ```
 
 ## Manual test checklist
 
-1. **Console:** confirm the overview metrics, agent states, and section shortcuts are shown without embedding the Inbox queue or Activity timeline.
-2. **Navigation:** visit Console, Inbox, Issues, Ranking, and Activity. Confirm each section has a distinct purpose. At a narrow viewport, open and close the sidebar menu.
-3. **Inbox escalation:** select the #388 item. Confirm the paused status, issue metadata, assigned agent, task, attempted steps, blocker, and decision question are clear.
-4. **Empty response:** submit an empty or whitespace-only response. Confirm validation appears and the agent stays paused.
-5. **Respond and resume:** enter guidance and submit. Confirm the response receipt, simulated (not real) resumed state, and human-attributed Activity entry.
-6. **Take over:** reload to reset, then take over the escalation. Confirm human ownership and attribution; no agent completion is implied.
-7. **Keep paused:** reload to reset, choose Keep paused, and confirm the paused status and response/takeover actions remain available.
-8. **Approval:** open the second Inbox item and try both Approve proposal and Request changes. Confirm the displayed result and corresponding human Activity event.
-9. **Issues:** verify issue rows, select different rows to update the inspector, search by ID/title/owner, and try status and category filters. Confirm #388 and #402 statuses mirror Inbox decisions.
-10. **Ranking:** verify human and agent contributions are explicitly labeled sample data.
-11. **Activity:** filter by actor and event type, search for an issue or action, and confirm local human actions appear once while initial entries remain labeled as sample data.
-12. **Responsive layout:** check the app around desktop, tablet, and phone widths; confirm navigation, cards, actions, and horizontally scrollable issue table remain usable.
-
-The project build can be checked with `npm run build`.
-
-
-## Latest section-separation update
-
-Console is now an overview and navigation hub only. Inbox owns human decisions and approvals. Issues owns tracking, filters, ownership and details without duplicating the escalation form. Ranking remains fictional sample contribution data. Activity is a filterable, timeline-first audit view. No backend or live Ziki integration was added.
+1. **Console:** two items wait on a human; the agents panel shows each agent's state; the stage strip shows counts per stage.
+2. **Escalation:** open the #388 agent question. Submitting with no option shows an error; choosing "Something else" requires written guidance.
+3. **Keep paused:** the banner changes, the item stays pending and the form remains.
+4. **Resume:** choose an option, optionally add a note, then send. The agent resumes, the item moves to *With agents*, and within a few seconds a plan appears for approval that reflects your choice and note.
+5. **Request changes:** an empty comment is rejected. After sending one, the agent revises and returns revision 2 with your feedback included.
+6. **Approve:** the plan moves to Deliver, then to Prove after the agent links a pull request.
+7. **Caught up:** approve #402 too. The Inbox badge disappears and both Inbox and Console show "All caught up".
+8. **Issues:** statuses, stages and owners match Inbox; the #388 work log lists every step; "Open in Inbox" appears while a decision is pending.
+9. **Take over:** use *Reset scenario* on #388, then *Take over*. You become the owner and Console shows the agent stopped.
+10. **Activity:** filter by actor (including System) and event type; issue links open that issue.
+11. **Responsive:** check desktop, tablet (1024px) and phone (390px / 320px) widths; the sidebar becomes a menu on small screens.

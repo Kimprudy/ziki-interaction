@@ -1,20 +1,21 @@
-import { StrictMode, useState } from 'react';
+import { StrictMode, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
+import {
+  type ActivityEntry, type Actor, type DecisionOption, type EventType, type Plan, type Priority, type Section, type Stage, type Tone,
+  decisionOptions, escalationEvidence, initialActivity, initialPlan402, issueById, issues, newId, planFor388, ranking, stageHelp, stages,
+} from './data';
 
-type Section = 'Console' | 'Inbox' | 'Issues' | 'Ranking' | 'Activity';
-type AgentState = 'waiting' | 'resumed' | 'takenOver' | 'paused';
-type InboxSelection = 'escalation' | 'approval';
-type Actor = 'Human' | 'Agent' | 'System';
+type EscalationState = 'waiting' | 'paused' | 'takenOver' | 'resumed';
+type Delivery = 'delivering' | 'testing';
+type Decision = { option: DecisionOption; note: string };
 
-type ActivityEntry = {
-  id: number;
-  actor: Actor;
-  name: string;
-  action: string;
-  issue: string;
-  when: string;
+type IssueStatus = { label: string; tone: Tone; stage: Stage; owner: string; next: string; inboxKey?: string };
+type InboxItem = {
+  key: string; issueId: string; kind: 'Agent question' | 'Plan approval'; priority: Priority;
+  summary: string; group: 'needs' | 'agent' | 'done'; statusLabel: string;
 };
+type IssuesUi = { search: string; stage: string; status: string; category: string; selectedId: string };
 
 const sections: { name: Section; icon: string }[] = [
   { name: 'Console', icon: '⌂' },
@@ -24,80 +25,180 @@ const sections: { name: Section; icon: string }[] = [
   { name: 'Activity', icon: '◷' },
 ];
 
-const initialActivity: ActivityEntry[] = [
-  { id: 1, actor: 'Agent', name: 'Ziki Reviewer', action: 'Paused and asked for a product decision', issue: '#388 · Google sign-in skips two-factor', when: 'Sample entry' },
-  { id: 2, actor: 'Human', name: 'Jordan D.', action: 'Added a triage note for review', issue: '#402 · Update account recovery guidance', when: 'Sample entry' },
-  { id: 3, actor: 'Agent', name: 'ASA3 Solver', action: 'Completed a local reproduction checklist', issue: '#400 · Profile page shows stale details', when: 'Sample entry' },
-  { id: 4, actor: 'Human', name: 'Jordan D.', action: 'Confirmed issue priority', issue: '#400 · Profile page shows stale details', when: 'Sample entry' },
-];
+// Simulated agent timing (ms). Short enough to watch, long enough to notice.
+const AGENT_STEP = 1400;
 
-const issues = [
-  { id: '#388', title: 'Google sign-in skips two-factor for a password account', priority: 'High', status: 'Needs your input', agent: 'Ziki Reviewer', category: 'Authentication' },
-  { id: '#400', title: 'Profile page shows stale details after an update', priority: 'Medium', status: 'In review', agent: 'ASA3 Solver', category: 'Profile' },
-  { id: '#402', title: 'Update account recovery guidance', priority: 'Medium', status: 'Approval needed', agent: 'Ziki Reviewer', category: 'Documentation' },
-  { id: '#405', title: 'Add a clearer empty state to saved items', priority: 'Low', status: 'Open', agent: 'Unassigned', category: 'Experience' },
-];
+const sentence = (action: string) => action.charAt(0).toLowerCase() + action.slice(1);
+const clock = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-const stateCopy: Record<AgentState, { title: string; description: string; badge: string }> = {
-  waiting: { title: 'Waiting for your input', description: 'The agent is paused. It will not continue until you choose what happens next.', badge: 'PAUSED' },
-  paused: { title: 'Kept paused', description: 'The agent remains paused. You can respond or take over whenever you’re ready.', badge: 'PAUSED' },
-  resumed: { title: 'Simulated: response received', description: 'Your guidance is recorded in this page and the sample status is resumed. No real agent was contacted.', badge: 'SIMULATED RESUME' },
-  takenOver: { title: 'You are responsible', description: 'This issue is marked as human-owned in the prototype. No agent action was triggered.', badge: 'HUMAN-OWNED' },
-};
+/* ------------------------------------------------------------------ */
+/* Workspace state: one place where decisions change the whole app.    */
+/* ------------------------------------------------------------------ */
+
+function useWorkspace() {
+  const [escalation, setEscalation] = useState<EscalationState>('waiting');
+  const [decision, setDecision] = useState<Decision | null>(null);
+  const [plans, setPlans] = useState<Record<string, Plan>>({ '#402': initialPlan402 });
+  const [delivery, setDelivery] = useState<Record<string, Delivery>>({});
+  const [activity, setActivity] = useState<ActivityEntry[]>(initialActivity);
+  const timers = useRef<Record<string, number[]>>({});
+
+  useEffect(() => () => Object.values(timers.current).flat().forEach(clearTimeout), []);
+
+  const log = (actor: Actor, name: string, action: string, issueId: string, type: EventType) =>
+    setActivity((current) => [{ id: newId(), actor, name, action, issueId, type, when: `${clock()} · this session` }, ...current]);
+
+  const schedule = (issueId: string, ms: number, fn: () => void) => {
+    const id = window.setTimeout(fn, ms);
+    (timers.current[issueId] ??= []).push(id);
+  };
+  const cancel = (issueId: string) => {
+    (timers.current[issueId] ?? []).forEach(clearTimeout);
+    timers.current[issueId] = [];
+  };
+  const updatePlan = (issueId: string, patch: Partial<Plan>) =>
+    setPlans((current) => (current[issueId] ? { ...current, [issueId]: { ...current[issueId], ...patch } } : current));
+
+  function respond(next: Decision) {
+    const plan = planFor388(next.option, next.note);
+    const label = decisionOptions.find((option) => option.id === next.option)!.label;
+    setDecision(next);
+    setEscalation('resumed');
+    setPlans((current) => ({ ...current, '#388': plan }));
+    log('Human', 'Jordan D.', `Answered the escalation: “${next.option === 'other' ? next.note : label}”`, '#388', 'Handoff');
+    schedule('#388', AGENT_STEP, () => log('Agent', 'Ziki Reviewer', 'Resumed with your decision and started drafting a plan', '#388', 'Agent work'));
+    schedule('#388', AGENT_STEP * 2.2, () => {
+      updatePlan('#388', { state: 'pending' });
+      log('Agent', 'Ziki Reviewer', `Submitted a plan for approval: ${plan.title} (est. ${plan.estimate})`, '#388', 'Approval');
+    });
+  }
+
+  function takeOver() {
+    cancel('#388');
+    setEscalation('takenOver');
+    log('Human', 'Jordan D.', 'Took over the issue; the agent stopped working on it', '#388', 'Handoff');
+    log('System', 'Ziki', 'Owner changed from Ziki Reviewer to Jordan D.', '#388', 'Status change');
+  }
+
+  function keepPaused() {
+    setEscalation('paused');
+    log('Human', 'Jordan D.', 'Kept the agent paused for now', '#388', 'Handoff');
+  }
+
+  function approvePlan(issueId: string) {
+    const plan = plans[issueId];
+    updatePlan(issueId, { state: 'approved' });
+    setDelivery((current) => ({ ...current, [issueId]: 'delivering' }));
+    log('Human', 'Jordan D.', `Approved the plan (revision ${plan.revision})`, issueId, 'Approval');
+    log('System', 'Ziki', 'Plan authorized; moved to Deliver', issueId, 'Status change');
+    schedule(issueId, AGENT_STEP * 1.6, () => {
+      setDelivery((current) => ({ ...current, [issueId]: 'testing' }));
+      log('Agent', plan.agent, 'Linked a pull request with the fix (simulated)', issueId, 'Agent work');
+      log('System', 'Ziki', 'Moved to Prove: waiting for an independent tester', issueId, 'Status change');
+    });
+  }
+
+  function requestChanges(issueId: string, feedback: string) {
+    const plan = plans[issueId];
+    updatePlan(issueId, { state: 'changes', feedback });
+    log('Human', 'Jordan D.', `Requested changes: “${feedback}”`, issueId, 'Approval');
+    schedule(issueId, AGENT_STEP, () => log('Agent', plan.agent, 'Picked up your feedback and is revising the plan', issueId, 'Agent work'));
+    schedule(issueId, AGENT_STEP * 2.2, () => {
+      setPlans((current) => {
+        const p = current[issueId];
+        if (!p || p.state !== 'changes') return current;
+        const steps = [...p.steps.filter((step) => !step.startsWith('Address your feedback')), `Address your feedback: “${feedback}”`];
+        return { ...current, [issueId]: { ...p, steps, revision: p.revision + 1, state: 'pending' } };
+      });
+      log('Agent', plan.agent, `Submitted revision ${plan.revision + 1} of the plan for approval`, issueId, 'Approval');
+    });
+  }
+
+  function resetScenario(issueId: string) {
+    cancel(issueId);
+    setDelivery(({ [issueId]: _removed, ...rest }) => rest);
+    if (issueId === '#388') {
+      setEscalation('waiting');
+      setDecision(null);
+      setPlans(({ '#388': _removed, ...rest }) => rest);
+    } else {
+      setPlans((current) => ({ ...current, [issueId]: initialPlan402 }));
+    }
+    log('System', 'Ziki', 'Scenario reset in this browser session', issueId, 'Status change');
+  }
+
+  /* Derived status: every section reads from here, so they always agree. */
+  function planStatus(issueId: string, owner: string): IssueStatus {
+    const plan = plans[issueId];
+    const inboxKey = `plan-${issueId}`;
+    if (!plan || plan.state === 'drafting') return { label: 'Agent working', tone: 'agent', stage: 'Authorize', owner, next: 'Agent is drafting a plan from your decision' };
+    if (plan.state === 'pending') return { label: 'Plan awaiting approval', tone: 'needs', stage: 'Authorize', owner, next: 'Approve the plan or request changes in Inbox', inboxKey };
+    if (plan.state === 'changes') return { label: 'Agent revising', tone: 'agent', stage: 'Authorize', owner, next: 'Agent is revising the plan using your feedback' };
+    if (delivery[issueId] === 'testing') return { label: 'In testing', tone: 'agent', stage: 'Prove', owner, next: 'An independent tester verifies the fix before merge' };
+    return { label: 'In delivery', tone: 'agent', stage: 'Deliver', owner, next: 'Agent is writing the fix and will link a pull request' };
+  }
+
+  function statusOf(issueId: string): IssueStatus {
+    if (issueId === '#388') {
+      if (escalation === 'waiting') return { label: 'Needs your decision', tone: 'needs', stage: 'Authorize', owner: 'Ziki Reviewer', next: 'Answer the agent’s question in Inbox', inboxKey: 'esc-#388' };
+      if (escalation === 'paused') return { label: 'Paused by you', tone: 'paused', stage: 'Authorize', owner: 'Ziki Reviewer', next: 'Agent stays paused until you answer in Inbox', inboxKey: 'esc-#388' };
+      if (escalation === 'takenOver') return { label: 'Human-owned', tone: 'human', stage: 'Deliver', owner: 'Jordan D. (you)', next: 'You deliver the fix; the agent has stopped' };
+      return planStatus('#388', 'Ziki Reviewer');
+    }
+    if (issueId === '#402') return planStatus('#402', 'Ziki Writer');
+    if (issueId === '#400') return { label: 'In testing', tone: 'agent', stage: 'Prove', owner: 'ASA3 Solver', next: 'An independent tester verifies the fix before merge' };
+    return { label: 'Awaiting confirmation', tone: 'open', stage: 'Report', owner: 'Unassigned', next: 'Two reviewers confirm the report before work starts' };
+  }
+
+  function planInboxItem(issueId: string, priority: Priority): InboxItem | null {
+    const plan = plans[issueId];
+    if (!plan) return null;
+    const base = { key: `plan-${issueId}`, issueId, kind: 'Plan approval' as const, priority };
+    if (plan.state === 'drafting') return { ...base, group: 'agent', statusLabel: 'Agent drafting', summary: `${plan.agent} is turning your decision into a plan.` };
+    if (plan.state === 'pending') return { ...base, group: 'needs', statusLabel: plan.revision > 1 ? `Revision ${plan.revision} ready` : 'Approval needed', summary: `${plan.agent} proposes: ${plan.title}.` };
+    if (plan.state === 'changes') return { ...base, group: 'agent', statusLabel: 'Agent revising', summary: `${plan.agent} is revising the plan using your feedback.` };
+    return { ...base, group: 'done', statusLabel: delivery[issueId] === 'testing' ? 'Approved · in testing' : 'Approved · in delivery', summary: `You approved: ${plan.title}.` };
+  }
+
+  const escalationItem: InboxItem = {
+    key: 'esc-#388', issueId: '#388', kind: 'Agent question', priority: 'High',
+    group: escalation === 'waiting' || escalation === 'paused' ? 'needs' : 'done',
+    statusLabel: escalation === 'waiting' ? 'Waiting for you' : escalation === 'paused' ? 'Kept paused' : escalation === 'takenOver' ? 'You took over' : 'Answered',
+    summary: escalation === 'waiting' || escalation === 'paused' ? 'Ziki Reviewer paused and needs a security policy decision.' : escalation === 'takenOver' ? 'You took responsibility for this issue.' : 'Your decision was sent to the agent.',
+  };
+  const priorityRank: Record<Priority, number> = { High: 0, Medium: 1, Low: 2 };
+  const inbox = [escalationItem, planInboxItem('#388', 'High'), planInboxItem('#402', 'Medium')]
+    .filter((item): item is InboxItem => item !== null)
+    .sort((a, b) => priorityRank[a.priority] - priorityRank[b.priority]);
+
+  return {
+    escalation, decision, plans, activity, inbox, statusOf,
+    pendingCount: inbox.filter((item) => item.group === 'needs').length,
+    actions: { respond, takeOver, keepPaused, approvePlan, requestChanges, resetScenario },
+  };
+}
+
+type Workspace = ReturnType<typeof useWorkspace>;
+
+/* ------------------------------------------------------------------ */
+/* App shell                                                           */
+/* ------------------------------------------------------------------ */
 
 function App() {
+  const ws = useWorkspace();
   const [section, setSection] = useState<Section>('Console');
-  const [agentState, setAgentState] = useState<AgentState>('waiting');
-  const [response, setResponse] = useState('');
-  const [submittedResponse, setSubmittedResponse] = useState('');
-  const [responseError, setResponseError] = useState('');
-  const [inboxSelection, setInboxSelection] = useState<InboxSelection>('escalation');
-  const [approvalState, setApprovalState] = useState<'pending' | 'approved' | 'changes'>('pending');
-  const [issueFilter, setIssueFilter] = useState('All issues');
-  const [activity, setActivity] = useState<ActivityEntry[]>(initialActivity);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-
-  const addActivity = (actor: Actor, name: string, action: string, issue: string) => {
-    setActivity((current) => [{ id: Date.now(), actor, name, action, issue, when: 'Just now · local demo' }, ...current]);
-  };
+  const [inboxKey, setInboxKey] = useState('esc-#388');
+  const [issuesUi, setIssuesUi] = useState<IssuesUi>({ search: '', stage: 'All stages', status: 'All statuses', category: 'All categories', selectedId: '#388' });
 
   function navigate(next: Section) {
     setSection(next);
     setMobileNavOpen(false);
+    window.scrollTo({ top: 0 });
   }
-
-  function submitResponse(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const trimmed = response.trim();
-    if (!trimmed) {
-      setResponseError('Enter guidance before marking the sample agent as resumed.');
-      return;
-    }
-    setResponseError('');
-    setSubmittedResponse(trimmed);
-    setResponse('');
-    setAgentState('resumed');
-    addActivity('Human', 'Jordan D.', 'Responded to the escalation; sample status changed to simulated resumed', '#388 · Google sign-in skips two-factor');
-  }
-
-  function takeOver() {
-    setResponseError('');
-    setAgentState('takenOver');
-    addActivity('Human', 'Jordan D.', 'Took responsibility for the paused issue', '#388 · Google sign-in skips two-factor');
-  }
-
-  function keepPaused() {
-    setResponseError('');
-    setAgentState('paused');
-    addActivity('Human', 'Jordan D.', 'Chose to keep the agent paused', '#388 · Google sign-in skips two-factor');
-  }
-
-  function resetEscalation() {
-    setAgentState('waiting');
-    setSubmittedResponse('');
-    setResponse('');
-    setResponseError('');
-  }
+  const openInbox = (key: string) => { setInboxKey(key); navigate('Inbox'); };
+  const openIssue = (id: string) => { setIssuesUi((ui) => ({ ...ui, selectedId: id, search: '', stage: 'All stages', status: 'All statuses', category: 'All categories' })); navigate('Issues'); };
+  const openStage = (stage: Stage) => { setIssuesUi((ui) => ({ ...ui, stage, search: '', status: 'All statuses', category: 'All categories' })); navigate('Issues'); };
 
   return (
     <div className="app-frame">
@@ -106,226 +207,634 @@ function App() {
         <div className="sidebar-brand">
           <span className="brand-symbol" aria-hidden="true">z</span>
           <span className="brand-word">ziki</span>
-          <span className="demo-tag">DEMO</span>
+          <span className="demo-tag">PROTOTYPE</span>
         </div>
-        <div className="workspace-switcher"><span className="workspace-avatar">N</span><span className="workspace-copy"><strong>Northstar Studio</strong><small>Sample workspace</small></span><span className="switcher-chevron">⌄</span></div>
+        <div className="workspace-switcher">
+          <span className="workspace-avatar">N</span>
+          <span className="workspace-copy"><strong>Northstar Studio</strong><small>Sample workspace</small></span>
+        </div>
         <div className="nav-label">WORKSPACE</div>
         <nav className="main-nav" aria-label="Main navigation">
-          {sections.map((item) => <button key={item.name} className={`nav-item ${section === item.name ? 'active' : ''}`} onClick={() => navigate(item.name)} aria-current={section === item.name ? 'page' : undefined}>
-            <span className="nav-icon" aria-hidden="true">{item.icon}</span><span>{item.name}</span>{item.name === 'Inbox' && <span className="nav-count">{(agentState === 'waiting' || agentState === 'paused' ? 1 : 0) + (approvalState === 'pending' ? 1 : 0)}</span>}
-          </button>)}
+          {sections.map((item) => (
+            <button key={item.name} className={`nav-item ${section === item.name ? 'active' : ''}`} onClick={() => navigate(item.name)} aria-current={section === item.name ? 'page' : undefined}>
+              <span className="nav-icon" aria-hidden="true">{item.icon}</span>
+              <span>{item.name}</span>
+              {item.name === 'Inbox' && ws.pendingCount > 0 && <span className="nav-count" aria-label={`${ws.pendingCount} pending`}>{ws.pendingCount}</span>}
+            </button>
+          ))}
         </nav>
-        <div className="sidebar-bottom"><div className="human-control"><span className="control-icon">✓</span><div><strong>Human in control</strong><small>Agents wait for approval</small></div></div><div className="sidebar-profile"><span className="profile-avatar">JD</span><span><strong>Jordan D.</strong><small>Workspace owner</small></span><span className="profile-more">···</span></div></div>
+        <div className="sidebar-bottom">
+          <div className="human-control">
+            <span className="control-icon" aria-hidden="true">✓</span>
+            <div><strong>Human in control</strong><small>Agents wait for your approval</small></div>
+          </div>
+          <div className="sidebar-profile">
+            <span className="profile-avatar">JD</span>
+            <span><strong>Jordan D.</strong><small>Workspace owner</small></span>
+          </div>
+        </div>
       </aside>
 
       <div className="main-column">
         <header className="topbar">
           <button className="mobile-menu" aria-label="Open navigation" onClick={() => setMobileNavOpen(true)}>☰</button>
           <div className="topbar-breadcrumb"><span>Northstar Studio</span><span className="crumb-slash">/</span><strong>{section}</strong></div>
-          <div className="topbar-right"><span className="demo-indicator"><i /> Sample data</span><button className="help-button" aria-label="Help">?</button><span className="top-avatar">JD</span></div>
+          <div className="topbar-right"><span className="top-avatar">JD</span></div>
         </header>
+        <div className="prototype-banner" role="note">
+          <strong>Prototype</strong> Sample workspace. Agent behaviour is simulated in your browser, nothing is sent to Ziki, and changes reset when you reload.
+        </div>
 
         <main className="page-content" key={section}>
-          {section === 'Console' && <ConsoleView agentState={agentState} approvalState={approvalState} onNavigate={navigate} />}
-          {section === 'Inbox' && <InboxView selection={inboxSelection} setSelection={setInboxSelection} agentState={agentState} response={response} setResponse={setResponse} submittedResponse={submittedResponse} error={responseError} setError={setResponseError} onSubmit={submitResponse} onTakeOver={takeOver} onKeepPaused={keepPaused} onReset={resetEscalation} approvalState={approvalState} setApprovalState={setApprovalState} addActivity={addActivity} />}
-          {section === 'Issues' && <IssuesView agentState={agentState} approvalState={approvalState} issueFilter={issueFilter} setIssueFilter={setIssueFilter} />}
+          {section === 'Console' && <ConsoleView ws={ws} onNavigate={navigate} onOpenInbox={openInbox} onOpenStage={openStage} />}
+          {section === 'Inbox' && <InboxView ws={ws} selectedKey={inboxKey} onSelect={setInboxKey} onOpenIssue={openIssue} />}
+          {section === 'Issues' && <IssuesView ws={ws} ui={issuesUi} setUi={setIssuesUi} onOpenInbox={openInbox} />}
           {section === 'Ranking' && <RankingView />}
-          {section === 'Activity' && <ActivityView activity={activity} />}
+          {section === 'Activity' && <ActivityView activity={ws.activity} onOpenIssue={openIssue} />}
         </main>
-        <footer className="global-footer"><span>Ziki interaction prototype <span className="footer-dot">·</span> Sample data only</span><span>No production connection</span></footer>
+        <footer className="global-footer"><span>Ziki human-agent interaction prototype</span><span>No production connection</span></footer>
       </div>
     </div>
   );
 }
 
-function PageHeader({ eyebrow, title, description, action }: { eyebrow?: string; title: string; description: string; action?: React.ReactNode }) {
-  return <div className="page-header"><div>{eyebrow && <div className="page-eyebrow">{eyebrow}</div>}<div className="page-title-row"><h1>{title}</h1>{action}</div><p>{description}</p></div></div>;
+/* ------------------------------------------------------------------ */
+/* Shared pieces                                                       */
+/* ------------------------------------------------------------------ */
+
+function PageHeader({ eyebrow, title, description, action }: { eyebrow: string; title: string; description: string; action?: React.ReactNode }) {
+  return (
+    <div className="page-header">
+      <div>
+        <div className="page-eyebrow">{eyebrow}</div>
+        <div className="page-title-row"><h1>{title}</h1>{action}</div>
+        <p>{description}</p>
+      </div>
+    </div>
+  );
 }
 
-function ConsoleView({ agentState, approvalState, onNavigate }: { agentState: AgentState; approvalState: 'pending' | 'approved' | 'changes'; onNavigate: (section: Section) => void }) {
-  const escalationPending = agentState === 'waiting' || agentState === 'paused';
-  const attentionCount = (escalationPending ? 1 : 0) + (approvalState === 'pending' ? 1 : 0);
-  const openIssues = 4;
+function StatusPill({ status }: { status: Pick<IssueStatus, 'label' | 'tone'> }) {
+  return <span className={`table-status tone-${status.tone}`}>{status.label}</span>;
+}
+
+function Lifecycle({ current, compact = false }: { current: Stage; compact?: boolean }) {
+  const currentIndex = stages.indexOf(current);
+  return (
+    <ol className={`lifecycle ${compact ? 'lifecycle-compact' : ''}`} aria-label={`Lifecycle: currently ${current}`}>
+      {stages.map((stage, index) => {
+        const state = index < currentIndex ? 'done' : index === currentIndex ? 'current' : 'todo';
+        return (
+          <li key={stage} className={`lifecycle-step ${state}`} aria-current={state === 'current' ? 'step' : undefined}>
+            <span className="lifecycle-dot" aria-hidden="true">{state === 'done' ? '✓' : index + 1}</span>
+            <span className="lifecycle-copy"><strong>{stage}</strong>{!compact && <small>{stageHelp[stage]}</small>}</span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Console: overview only                                              */
+/* ------------------------------------------------------------------ */
+
+function ConsoleView({ ws, onNavigate, onOpenInbox, onOpenStage }: {
+  ws: Workspace; onNavigate: (section: Section) => void; onOpenInbox: (key: string) => void; onOpenStage: (stage: Stage) => void;
+}) {
+  const statuses = issues.map((issue) => ({ issue, status: ws.statusOf(issue.id) }));
+  const agentRows = [
+    { name: 'Ziki Reviewer', issueId: '#388', avatar: 'ZR' },
+    { name: 'Ziki Writer', issueId: '#402', avatar: 'ZW' },
+    { name: 'ASA3 Solver', issueId: '#400', avatar: 'AS' },
+  ];
+  const working = statuses.filter(({ status }) => status.tone === 'agent').length;
+  const pending = ws.inbox.filter((item) => item.group === 'needs');
+  const topPoints = ranking[0];
+
   return <>
-    <PageHeader eyebrow="WORKSPACE OVERVIEW · SAMPLE DATA" title="Console" description="Monitor workspace health and agent states. Open a section to review the work behind each number." action={<span className="sample-label">DEMO WORKSPACE</span>} />
+    <PageHeader eyebrow="WORKSPACE OVERVIEW" title="Console" description="See what needs you, what your agents are doing, and where each issue sits in the Ziki lifecycle." />
     <div className="metric-grid">
-      <MetricCard label="Needs human review" value={String(attentionCount)} note="Escalations and approvals" icon="!" tone="amber" onClick={() => onNavigate('Inbox')} />
-      <MetricCard label="Agent states" value={agentState === 'takenOver' ? '1 owned' : agentState === 'resumed' ? '1 responded' : '1 paused'} note="One additional sample agent" icon="✳" tone="blue" onClick={() => onNavigate('Issues')} />
-      <MetricCard label="Tracked issues" value={String(openIssues)} note="Across the sample workspace" icon="◉" tone="indigo" onClick={() => onNavigate('Issues')} />
-      <MetricCard label="Contributors" value="4" note="Fictional ranking examples" icon="↗" tone="green" onClick={() => onNavigate('Ranking')} />
+      <MetricCard label="Needs your decision" value={String(ws.pendingCount)} note={ws.pendingCount ? 'Open Inbox to decide' : 'All caught up'} icon="!" tone="amber" onClick={() => onNavigate('Inbox')} />
+      <MetricCard label="Agents working" value={String(working)} note="Drafting, delivering or testing" icon="✳" tone="blue" onClick={() => onNavigate('Activity')} />
+      <MetricCard label="Open issues" value={String(issues.length)} note="Across all lifecycle stages" icon="◉" tone="indigo" onClick={() => onNavigate('Issues')} />
+      <MetricCard label="Top contributor" value={topPoints.points.toLocaleString()} note={`${topPoints.name} · sample points`} icon="↗" tone="green" onClick={() => onNavigate('Ranking')} />
     </div>
+
     <div className="console-grid">
-      <section className="surface agent-card console-agent-card">
-        <div className="panel-heading"><div><span className="panel-kicker">CURRENT STATES</span><h2>Agent overview</h2></div><span className="sample-label">ILLUSTRATIVE</span></div>
-        <AgentSummary name="Ziki Reviewer" role="Issue triage · #388" state={escalationPending ? (agentState === 'paused' ? 'Kept paused' : 'Waiting for input') : agentState === 'takenOver' ? 'Human-owned' : 'Guidance recorded · demo'} avatar="ZR" />
-        <AgentSummary name="ASA3 Solver" role="Implementation review · #400" state="Sample · standing by" avatar="AS" />
-        <p className="subtle-note">These are demonstration states, not connected or running agents.</p>
+      <section className="surface console-panel" aria-labelledby="attention-heading">
+        <div className="panel-heading"><div><span className="panel-kicker">NEEDS YOU</span><h2 id="attention-heading">Waiting on a human</h2></div></div>
+        {pending.length === 0 ? (
+          <div className="empty-state"><strong>All caught up</strong><span>Agents will ask in Inbox when they need a decision.</span></div>
+        ) : pending.map((item) => (
+          <button key={item.key} className="attention-item" onClick={() => onOpenInbox(item.key)}>
+            <span className={`attention-icon ${item.kind === 'Agent question' ? 'urgent' : 'approval'}`} aria-hidden="true">{item.kind === 'Agent question' ? 'Ⅱ' : '✓'}</span>
+            <span className="attention-copy"><strong>{item.kind} · {item.issueId}</strong><small>{item.summary}</small></span>
+            <span className="attention-cta">Review →</span>
+          </button>
+        ))}
       </section>
-      <section className="surface console-shortcuts">
-        <div className="panel-heading"><div><span className="panel-kicker">WORKSPACE AREAS</span><h2>Go to a section</h2></div></div>
-        <button className="console-shortcut" onClick={() => onNavigate('Inbox')}><span className="shortcut-icon">▤</span><span><strong>Inbox</strong><small>{attentionCount ? `${attentionCount} item(s) need a decision` : 'No pending human decisions'}</small></span><span className="row-arrow">→</span></button>
-        <button className="console-shortcut" onClick={() => onNavigate('Issues')}><span className="shortcut-icon">◉</span><span><strong>Issues</strong><small>Track priority, status, category and owner</small></span><span className="row-arrow">→</span></button>
-        <button className="console-shortcut" onClick={() => onNavigate('Ranking')}><span className="shortcut-icon">↗</span><span><strong>Ranking</strong><small>Compare fictional sample contributions</small></span><span className="row-arrow">→</span></button>
-        <button className="console-shortcut" onClick={() => onNavigate('Activity')}><span className="shortcut-icon">◷</span><span><strong>Activity</strong><small>Review the attributed event timeline</small></span><span className="row-arrow">→</span></button>
+
+      <section className="surface console-panel" aria-labelledby="agents-heading">
+        <div className="panel-heading"><div><span className="panel-kicker">AGENTS</span><h2 id="agents-heading">What agents are doing</h2></div></div>
+        {agentRows.map((agent) => {
+          const status = ws.statusOf(agent.issueId);
+          return (
+            <div className="agent-summary" key={agent.name}>
+              <span className="agent-avatar">{agent.avatar}</span>
+              <span className="agent-info"><strong>{agent.name}</strong><small>{agent.issueId} · {issueById(agent.issueId).shortTitle}</small></span>
+              <StatusPill status={status.owner.startsWith('Jordan') ? { label: 'Stopped · you took over', tone: 'human' } : status} />
+            </div>
+          );
+        })}
       </section>
     </div>
-    <p className="console-disclaimer">Console is an overview only. Review decisions in Inbox, issue ownership in Issues, and actions in Activity.</p>
+
+    <section className="surface stage-strip" aria-labelledby="stage-heading">
+      <div className="panel-heading"><div><span className="panel-kicker">LIFECYCLE</span><h2 id="stage-heading">Issues by stage</h2></div></div>
+      <div className="stage-grid">
+        {stages.map((stage) => {
+          const count = statuses.filter(({ status }) => status.stage === stage).length;
+          return (
+            <button key={stage} className={`stage-cell ${count ? '' : 'stage-empty'}`} onClick={() => onOpenStage(stage)} disabled={!count} title={stageHelp[stage]}>
+              <strong>{count}</strong><span>{stage}</span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
   </>;
 }
 
 function MetricCard({ label, value, note, icon, tone, onClick }: { label: string; value: string; note: string; icon: string; tone: string; onClick: () => void }) {
-  return <button className="metric-card surface" onClick={onClick}><span className={`metric-icon ${tone}`}>{icon}</span><span className="metric-label">{label}</span><strong className="metric-value">{value}</strong><span className="metric-note">{note}</span></button>;
+  return (
+    <button className="metric-card surface" onClick={onClick}>
+      <span className={`metric-icon ${tone}`} aria-hidden="true">{icon}</span>
+      <span className="metric-label">{label}</span>
+      <strong className="metric-value">{value}</strong>
+      <span className="metric-note">{note}</span>
+    </button>
+  );
 }
 
-function AgentSummary({ name, role, state, avatar }: { name: string; role: string; state: string; avatar: string }) {
-  return <div className="agent-summary"><span className="agent-avatar">{avatar}</span><span className="agent-info"><strong>{name}</strong><small>{role}</small></span><span className="agent-state"><i />{state}</span></div>;
-}
+/* ------------------------------------------------------------------ */
+/* Inbox: human review                                                 */
+/* ------------------------------------------------------------------ */
 
-function InboxView(props: {
-  selection: InboxSelection; setSelection: (selection: InboxSelection) => void; agentState: AgentState;
-  response: string; setResponse: (value: string) => void; submittedResponse: string; error: string; setError: (value: string) => void;
-  onSubmit: (event: React.FormEvent<HTMLFormElement>) => void; onTakeOver: () => void; onKeepPaused: () => void; onReset: () => void;
-  approvalState: 'pending' | 'approved' | 'changes'; setApprovalState: (state: 'pending' | 'approved' | 'changes') => void;
-  addActivity: (actor: Actor, name: string, action: string, issue: string) => void;
-}) {
-  const pendingCount = (props.agentState === 'waiting' || props.agentState === 'paused' ? 1 : 0) + (props.approvalState === 'pending' ? 1 : 0);
+function InboxView({ ws, selectedKey, onSelect, onOpenIssue }: { ws: Workspace; selectedKey: string; onSelect: (key: string) => void; onOpenIssue: (id: string) => void }) {
+  const selected = ws.inbox.find((item) => item.key === selectedKey) ?? ws.inbox[0];
+  const groups: { id: InboxItem['group']; title: string; empty?: string }[] = [
+    { id: 'needs', title: 'Needs your decision', empty: 'All caught up. Agents will ask here when they need you.' },
+    { id: 'agent', title: 'With agents' },
+    { id: 'done', title: 'Handled' },
+  ];
+
   return <>
-    <PageHeader eyebrow="HUMAN REVIEW QUEUE" title="Inbox" description="Decisions and approvals are ordered so you can handle the most important item first." action={<span className="inbox-total"><b>{pendingCount}</b> {pendingCount === 1 ? 'item needs' : 'items need'} attention</span>} />
+    <PageHeader
+      eyebrow="HUMAN REVIEW QUEUE"
+      title="Inbox"
+      description="Agents pause here when they need a decision or your approval. Your choice is sent back to the agent and the outcome shows across the workspace."
+      action={<span className="inbox-total"><b>{ws.pendingCount}</b> {ws.pendingCount === 1 ? 'item needs' : 'items need'} you</span>}
+    />
     <div className="inbox-layout">
-      <section className="surface inbox-list-panel">
-        <div className="list-toolbar"><span className="list-heading">For your review <span className="count-badge">2</span></span><span className="sort-label">Priority <span>⌄</span></span></div>
-        <button className={`inbox-item ${props.selection === 'escalation' ? 'selected' : ''}`} onClick={() => props.setSelection('escalation')}>
-          <span className={`inbox-priority-dot ${props.agentState === 'waiting' || props.agentState === 'paused' ? 'high' : 'done'}`} /><span className="inbox-item-copy"><span className="inbox-item-top"><b>Agent question</b><span className="priority-text high-text">HIGH</span></span><strong>#388 · Google sign-in skips two-factor</strong><small>{props.agentState === 'waiting' || props.agentState === 'paused' ? 'Ziki Reviewer is paused and needs a policy decision.' : props.agentState === 'takenOver' ? 'You took responsibility for this issue.' : 'Your guidance was recorded in the local demo.'}</small><span className="inbox-item-foot">{props.agentState === 'waiting' ? 'Waiting for you' : props.agentState === 'paused' ? 'Kept paused' : props.agentState === 'takenOver' ? 'Human-owned' : 'Simulated resumed'} <i /> Authentication</span></span>
-        </button>
-        <button className={`inbox-item ${props.selection === 'approval' ? 'selected' : ''}`} onClick={() => props.setSelection('approval')}>
-          <span className={`inbox-priority-dot ${props.approvalState === 'pending' ? 'medium' : 'done'}`} /><span className="inbox-item-copy"><span className="inbox-item-top"><b>Approval request</b><span className="priority-text medium-text">MEDIUM</span></span><strong>#402 · Account recovery guidance</strong><small>{props.approvalState === 'pending' ? 'Review a proposed update before it is marked accepted.' : props.approvalState === 'approved' ? 'You marked the sample proposal approved.' : 'You requested changes to the sample proposal.'}</small><span className="inbox-item-foot">{props.approvalState === 'pending' ? 'Approval needed' : props.approvalState === 'approved' ? 'Approved · demo' : 'Changes requested'} <i /> Documentation</span></span>
-        </button>
-        <div className="queue-note"><span>ⓘ</span><p>Sample queue only. Items do not update a real workspace.</p></div>
+      <section className="surface inbox-list-panel" aria-label="Review queue">
+        {groups.map((group) => {
+          const items = ws.inbox.filter((item) => item.group === group.id);
+          if (!items.length && !group.empty) return null;
+          return (
+            <div className="inbox-group" key={group.id}>
+              <div className="list-toolbar"><span className="list-heading">{group.title} <span className="count-badge">{items.length}</span></span></div>
+              {items.length === 0 && <p className="inbox-empty">{group.empty}</p>}
+              {items.map((item) => (
+                <button key={item.key} className={`inbox-item ${selected.key === item.key ? 'selected' : ''}`} onClick={() => onSelect(item.key)} aria-pressed={selected.key === item.key}>
+                  <span className={`inbox-priority-dot ${item.group === 'done' ? 'done' : item.group === 'agent' ? 'agent' : item.priority.toLowerCase()}`} aria-hidden="true" />
+                  <span className="inbox-item-copy">
+                    <span className="inbox-item-top"><b>{item.kind}</b><span className={`priority-text ${item.priority.toLowerCase()}-text`}>{item.priority.toUpperCase()}</span></span>
+                    <strong>{item.issueId} · {issueById(item.issueId).shortTitle}</strong>
+                    <small>{item.summary}</small>
+                    <span className="inbox-item-foot">{item.statusLabel}<i />{issueById(item.issueId).category}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          );
+        })}
       </section>
-      <section className="surface inbox-detail-panel">
-        {props.selection === 'escalation' ? <EscalationPanel agentState={props.agentState} response={props.response} setResponse={props.setResponse} submittedResponse={props.submittedResponse} error={props.error} setError={props.setError} onSubmit={props.onSubmit} onTakeOver={props.onTakeOver} onKeepPaused={props.onKeepPaused} onReset={props.onReset} /> : <ApprovalPanel state={props.approvalState} setState={props.setApprovalState} addActivity={props.addActivity} />}
+      <section className="surface inbox-detail-panel" aria-live="polite">
+        {selected.kind === 'Agent question'
+          ? <EscalationPanel ws={ws} onOpenPlan={() => onSelect('plan-#388')} onOpenIssue={onOpenIssue} />
+          : <PlanPanel key={selected.key} ws={ws} issueId={selected.issueId} onOpenIssue={onOpenIssue} />}
       </section>
     </div>
   </>;
 }
 
-function EscalationPanel({ agentState, response, setResponse, submittedResponse, error, setError, onSubmit, onTakeOver, onKeepPaused, onReset }: {
-  agentState: AgentState; response: string; setResponse: (value: string) => void; submittedResponse: string; error: string; setError: (value: string) => void;
-  onSubmit: (event: React.FormEvent<HTMLFormElement>) => void; onTakeOver: () => void; onKeepPaused: () => void; onReset: () => void;
-}) {
-  const status = stateCopy[agentState];
+const escalationBanner: Record<EscalationState, { title: string; body: string; badge: string; symbol: string }> = {
+  waiting: { title: 'Agent paused · waiting for your decision', body: 'Ziki Reviewer stopped before choosing a security rule. It will not continue until you decide.', badge: 'PAUSED', symbol: 'Ⅱ' },
+  paused: { title: 'Kept paused', body: 'The agent stays paused and this stays in your queue. Answer or take over whenever you’re ready.', badge: 'PAUSED', symbol: 'Ⅱ' },
+  resumed: { title: 'Agent resumed with your decision', body: 'Ziki Reviewer is acting on your answer. Follow its progress below (simulated).', badge: 'RESUMED', symbol: '↻' },
+  takenOver: { title: 'You own this issue', body: 'The agent stopped working on #388. You are responsible for the next step.', badge: 'HUMAN-OWNED', symbol: '✓' },
+};
+
+function IssueHeading({ issueId, ownerLabel, owner, status }: { issueId: string; ownerLabel: string; owner: string; status: IssueStatus }) {
+  const issue = issueById(issueId);
+  const initials = owner.startsWith('Jordan') ? 'JD' : owner.split(' ').map((part) => part[0]).join('').slice(0, 2);
+  return (
+    <div className="detail-issue-heading">
+      <div className="issue-label-row">
+        <span className="issue-number">ISSUE {issueId}</span>
+        <span className={`priority-chip ${issue.priority.toLowerCase()}-chip`}>● {issue.priority}</span>
+        <StatusPill status={status} />
+      </div>
+      <h2>{issue.title}</h2>
+      <div className="assignment-row">
+        <span className="assigned-avatar">{initials}</span>
+        <span>{ownerLabel} <strong>{owner}</strong></span>
+        <span className="category-tag">{issue.category}</span>
+      </div>
+      <Lifecycle current={status.stage} compact />
+    </div>
+  );
+}
+
+function EscalationPanel({ ws, onOpenPlan, onOpenIssue }: { ws: Workspace; onOpenPlan: () => void; onOpenIssue: (id: string) => void }) {
+  const { escalation, decision } = ws;
+  const status = ws.statusOf('#388');
+  const banner = escalationBanner[escalation];
+  const open = escalation === 'waiting' || escalation === 'paused';
+
   return <>
-    <div className={`escalation-status ${agentState}`} role="status" aria-live="polite"><span className="status-symbol">{agentState === 'resumed' ? '↻' : agentState === 'takenOver' ? '✓' : 'Ⅱ'}</span><span><strong>{status.title}</strong><small>{status.description}</small></span><b className="status-badge">{status.badge}</b></div>
-    <div className="detail-issue-heading"><div className="issue-label-row"><span className="issue-number">ISSUE #388</span><span className="priority-chip high-chip">● High</span><span className="issue-status-chip">{agentState === 'takenOver' ? 'Human-owned' : agentState === 'resumed' ? 'Simulated resumed' : 'Needs input'}</span></div><h2>Google sign-in skips two-factor for a password account</h2><div className="assignment-row"><span className="assigned-avatar">{agentState === 'takenOver' ? 'JD' : 'ZR'}</span><span>Assigned to <strong>{agentState === 'takenOver' ? 'Jordan D. (you)' : 'Ziki Reviewer'}</strong></span><span className="category-tag">Authentication</span></div></div>
-    <div className="task-box"><div className="task-icon-small">⌘</div><div><small className="field-label">AGENT’S CURRENT TASK</small><strong>Review authentication flow</strong><p>Trace Google sign-in and confirm when two-factor verification should be required.</p></div></div>
-    <div className="escalation-details"><div className="detail-column"><h3><span className="detail-check">✓</span> Steps attempted</h3><ul><li>Compared Google sign-in with password sign-in.</li><li>Checked where the two-factor challenge is triggered.</li></ul></div><div className="detail-column blocker-column"><h3><span className="detail-alert">!</span> What’s blocking the agent</h3><p>The expected policy for Google accounts is not specified. The agent has paused rather than choose a security behavior on your behalf.</p></div></div>
-    <div className="decision-question"><small>DECISION NEEDED</small><p>Should Google accounts complete two-factor verification when it’s enabled on their account?</p></div>
-    {submittedResponse && agentState === 'resumed' && <div className="response-receipt"><strong>Your guidance</strong><p>“{submittedResponse}”</p><small>Local prototype record · not sent to a real agent</small></div>}
-    {(agentState === 'waiting' || agentState === 'paused') ? <form className="escalation-form" onSubmit={onSubmit}>
-      <label htmlFor="human-response">Your response</label><textarea id="human-response" value={response} onChange={(event) => { setResponse(event.target.value); if (error) setError(''); }} placeholder="Explain what behavior you expect…" rows={3} aria-describedby={error ? 'response-error' : 'response-help'} />
-      {error ? <p id="response-error" className="form-hint error-text" role="alert">{error}</p> : <p id="response-help" className="form-hint">This response changes only the local demonstration state.</p>}
-      <div className="escalation-actions"><button className="button button-primary" type="submit">Respond and resume <span aria-hidden="true">→</span></button><button className="button button-outline" type="button" onClick={onTakeOver}>Take over</button><button className="button button-quiet" type="button" onClick={onKeepPaused}>Keep paused</button></div>
-    </form> : <div className="completed-actions"><span className="completion-note">{agentState === 'takenOver' ? 'You are now responsible for this issue.' : 'Your response is recorded in the local demo.'}</span><button className="button button-outline" onClick={onReset}>Reset demo state</button></div>}
-    <div className="no-live-note"><span>ⓘ</span><span>Sample interaction only. No real agent, Ziki account, or backend is connected.</span></div>
+    <div className={`escalation-status ${escalation}`} role="status">
+      <span className="status-symbol" aria-hidden="true">{banner.symbol}</span>
+      <span><strong>{banner.title}</strong><small>{banner.body}</small></span>
+      <b className="status-badge">{banner.badge}</b>
+    </div>
+    <IssueHeading issueId="#388" ownerLabel="Assigned to" owner={status.owner} status={status} />
+
+    <div className="task-box">
+      <div className="task-icon-small" aria-hidden="true">⌘</div>
+      <div><small className="field-label">WHAT THE AGENT WAS DOING</small><strong>{escalationEvidence.task.title}</strong><p>{escalationEvidence.task.body}</p></div>
+    </div>
+    <div className="escalation-details">
+      <div className="detail-column">
+        <h3><span className="detail-check" aria-hidden="true">✓</span> Steps attempted</h3>
+        <ul>{escalationEvidence.attempted.map((step) => <li key={step}>{step}</li>)}</ul>
+      </div>
+      <div className="detail-column blocker-column">
+        <h3><span className="detail-alert" aria-hidden="true">!</span> Why it needs you</h3>
+        <p>{escalationEvidence.blocker}</p>
+      </div>
+    </div>
+    <dl className="evidence-grid" aria-label="Evidence the agent collected">
+      {escalationEvidence.findings.map((finding) => <div key={finding.label}><dt>{finding.label}</dt><dd>{finding.value}</dd></div>)}
+    </dl>
+    <div className="decision-question"><small>DECISION NEEDED</small><p>{escalationEvidence.question}</p></div>
+
+    {open && <DecisionForm onRespond={ws.actions.respond} onTakeOver={ws.actions.takeOver} onKeepPaused={ws.actions.keepPaused} paused={escalation === 'paused'} />}
+
+    {escalation === 'resumed' && decision && <>
+      <div className="response-receipt">
+        <strong>Your decision</strong>
+        <p>{decision.option === 'other' ? `“${decision.note}”` : decisionOptions.find((option) => option.id === decision.option)!.label}{decision.option !== 'other' && decision.note && <><br /><span className="receipt-note">Note: “{decision.note}”</span></>}</p>
+      </div>
+      <AgentProgress
+        title="What happens next"
+        steps={[
+          { label: 'Decision sent to Ziki Reviewer', done: true },
+          { label: 'Agent drafts a plan from your decision', done: ws.plans['#388']?.state !== 'drafting', active: ws.plans['#388']?.state === 'drafting' },
+          { label: 'Plan comes back to you for approval', done: ws.plans['#388']?.state === 'approved', active: ws.plans['#388']?.state === 'pending' || ws.plans['#388']?.state === 'changes' },
+        ]}
+      />
+      <div className="completed-actions">
+        {ws.plans['#388'] && ws.plans['#388'].state !== 'drafting'
+          ? <button className="button button-primary" onClick={onOpenPlan}>{ws.plans['#388'].state === 'pending' ? 'Review the agent’s plan →' : 'View the plan →'}</button>
+          : <span className="completion-note">The agent’s plan will appear in your Inbox.</span>}
+        <button className="button button-quiet" onClick={() => ws.actions.resetScenario('#388')}>Reset scenario</button>
+      </div>
+    </>}
+
+    {escalation === 'takenOver' && <>
+      <AgentProgress title="What changed" steps={[
+        { label: 'Ziki Reviewer stopped working on #388', done: true },
+        { label: 'Owner changed to Jordan D. (you)', done: true },
+        { label: 'Next: you deliver the fix and link a pull request' },
+      ]} />
+      <div className="completed-actions">
+        <button className="button button-outline" onClick={() => onOpenIssue('#388')}>Open in Issues</button>
+        <button className="button button-quiet" onClick={() => ws.actions.resetScenario('#388')}>Reset scenario</button>
+      </div>
+    </>}
   </>;
 }
 
-function ApprovalPanel({ state, setState, addActivity }: { state: 'pending' | 'approved' | 'changes'; setState: (state: 'pending' | 'approved' | 'changes') => void; addActivity: (actor: Actor, name: string, action: string, issue: string) => void }) {
-  function update(next: 'approved' | 'changes') {
-    if (state === next) return;
-    setState(next);
-    addActivity('Human', 'Jordan D.', next === 'approved' ? 'Approved the sample account recovery proposal' : 'Requested changes to the sample account recovery proposal', '#402 · Account recovery guidance');
+function DecisionForm({ onRespond, onTakeOver, onKeepPaused, paused }: {
+  onRespond: (decision: Decision) => void; onTakeOver: () => void; onKeepPaused: () => void; paused: boolean;
+}) {
+  const [option, setOption] = useState<DecisionOption | null>(null);
+  const [note, setNote] = useState('');
+  const [error, setError] = useState('');
+
+  function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmed = note.trim();
+    if (!option) return setError('Choose one of the options above before resuming the agent.');
+    if (option === 'other' && !trimmed) return setError('Write the guidance the agent should follow.');
+    setError('');
+    onRespond({ option, note: trimmed });
   }
+
+  return (
+    <form className="escalation-form" onSubmit={submit} noValidate>
+      <fieldset className="decision-options">
+        <legend>Your decision</legend>
+        {decisionOptions.map((choice) => (
+          <label key={choice.id} className={`decision-option ${option === choice.id ? 'chosen' : ''}`}>
+            <input type="radio" name="decision" value={choice.id} checked={option === choice.id} onChange={() => { setOption(choice.id); setError(''); }} />
+            <span>
+              <strong>{choice.label}{choice.recommended && <em className="recommended-tag">Agent recommends</em>}</strong>
+              <small>If you choose this: {choice.consequence}</small>
+            </span>
+          </label>
+        ))}
+      </fieldset>
+      <label htmlFor="human-response">{option === 'other' ? 'Guidance for the agent (required)' : 'Add a note for the agent (optional)'}</label>
+      <textarea id="human-response" value={note} onChange={(event) => { setNote(event.target.value); if (error) setError(''); }} placeholder="Explain what behaviour you expect…" rows={3} aria-describedby={error ? 'response-error' : undefined} aria-invalid={Boolean(error)} />
+      {error && <p id="response-error" className="form-hint error-text" role="alert">{error}</p>}
+      <div className="escalation-actions">
+        <button className="button button-primary" type="submit">Send decision &amp; resume agent <span aria-hidden="true">→</span></button>
+        <button className="button button-outline" type="button" onClick={onTakeOver}>Take over</button>
+        {!paused && <button className="button button-quiet" type="button" onClick={onKeepPaused}>Keep paused</button>}
+      </div>
+      <ul className="action-consequences">
+        <li><b>Send &amp; resume:</b> the agent continues and returns a plan for your approval.</li>
+        <li><b>Take over:</b> you become the owner and the agent stops working on this issue.</li>
+        {!paused && <li><b>Keep paused:</b> nothing changes; it stays in your queue.</li>}
+      </ul>
+    </form>
+  );
+}
+
+function AgentProgress({ title, steps }: { title: string; steps: { label: string; done?: boolean; active?: boolean }[] }) {
+  return (
+    <div className="agent-progress">
+      <small className="field-label">{title.toUpperCase()}</small>
+      <ol>
+        {steps.map((step) => (
+          <li key={step.label} className={step.done ? 'done' : step.active ? 'active' : ''}>
+            <span className="progress-dot" aria-hidden="true">{step.done ? '✓' : ''}</span>
+            {step.label}
+            {step.active && !step.done && <span className="visually-hidden"> (in progress)</span>}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function PlanPanel({ ws, issueId, onOpenIssue }: { ws: Workspace; issueId: string; onOpenIssue: (id: string) => void }) {
+  const plan = ws.plans[issueId];
+  const status = ws.statusOf(issueId);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedback, setFeedback] = useState('');
+  const [error, setError] = useState('');
+  if (!plan) return null;
+
+  const banner = {
+    drafting: { cls: 'changes', symbol: '…', title: 'Agent is drafting a plan', body: `${plan.agent} is turning your decision into a plan. It will ask for your approval next.` },
+    pending: { cls: 'pending', symbol: '◷', title: plan.revision > 1 ? `Revision ${plan.revision} needs your approval` : 'Plan needs your approval', body: 'Nothing is delivered until you approve. You can also send it back with changes.' },
+    changes: { cls: 'changes', symbol: '↺', title: 'Changes requested · agent revising', body: `${plan.agent} is updating the plan and will ask you again.` },
+    approved: { cls: 'approved', symbol: '✓', title: 'Approved · agent is delivering', body: 'The issue moved to Deliver. Progress is recorded in Activity.' },
+  }[plan.state];
+
+  function sendFeedback(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!feedback.trim()) return setError('Tell the agent what to change.');
+    ws.actions.requestChanges(issueId, feedback.trim());
+    setFeedback(''); setFeedbackOpen(false); setError('');
+  }
+
   return <>
-    <div className={`approval-state ${state}`}><span>{state === 'pending' ? '◷' : state === 'approved' ? '✓' : '↺'}</span><div><strong>{state === 'pending' ? 'Approval needed' : state === 'approved' ? 'Marked approved' : 'Changes requested'}</strong><small>{state === 'pending' ? 'Review the sample proposal before accepting.' : 'This outcome is recorded locally for the prototype.'}</small></div></div>
-    <div className="detail-issue-heading"><div className="issue-label-row"><span className="issue-number">ISSUE #402</span><span className="priority-chip medium-chip">● Medium</span><span className="issue-status-chip">{state === 'pending' ? 'Approval needed' : state === 'approved' ? 'Approved (demo)' : 'Changes requested'}</span></div><h2>Update account recovery guidance</h2><div className="assignment-row"><span className="assigned-avatar">ZR</span><span>Proposed by <strong>Ziki Reviewer</strong></span><span className="category-tag">Documentation</span></div></div>
-    <div className="proposal-card"><small className="field-label">SAMPLE PROPOSAL</small><h3>Clarify recovery options on the help page</h3><p>Add a short explanation of account recovery steps and link users to support if they can’t access their recovery method.</p><div className="proposal-reason"><strong>Why it was proposed</strong><span>The current guidance does not describe what to do when a recovery method is unavailable.</span></div></div>
-    {state === 'pending' ? <div className="approval-actions"><button className="button button-primary" onClick={() => update('approved')}>Approve proposal</button><button className="button button-outline" onClick={() => update('changes')}>Request changes</button></div> : <button className="button button-outline" onClick={() => setState('pending')}>Reset approval demo</button>}
-    <div className="no-live-note"><span>ⓘ</span><span>Demonstration approval only. No content is published or backend updated.</span></div>
+    <div className={`approval-state ${banner.cls}`} role="status">
+      <span aria-hidden="true">{banner.symbol}</span>
+      <div><strong>{banner.title}</strong><small>{banner.body}</small></div>
+    </div>
+    <IssueHeading issueId={issueId} ownerLabel="Plan by" owner={plan.agent} status={status} />
+    <div className="proposal-card">
+      <div className="proposal-top"><small className="field-label">PROPOSED PLAN · REVISION {plan.revision}</small><span className="estimate-chip">Est. {plan.estimate}</span></div>
+      <h3>{plan.title}</h3>
+      <ol className="plan-steps">{plan.steps.map((step) => <li key={step}>{step}</li>)}</ol>
+      <div className="proposal-reason"><strong>Why this plan</strong><span>{plan.reason}</span></div>
+      {plan.feedback && plan.revision > 1 && <div className="proposal-reason"><strong>Your earlier feedback</strong><span>“{plan.feedback}” — addressed in this revision.</span></div>}
+    </div>
+
+    {plan.state === 'pending' && !feedbackOpen && <>
+      <div className="approval-actions">
+        <button className="button button-primary" onClick={() => ws.actions.approvePlan(issueId)}>Approve plan</button>
+        <button className="button button-outline" onClick={() => setFeedbackOpen(true)}>Request changes</button>
+      </div>
+      <ul className="action-consequences">
+        <li><b>Approve:</b> the agent starts delivering and links a pull request for testing.</li>
+        <li><b>Request changes:</b> the agent revises the plan and asks you again.</li>
+      </ul>
+    </>}
+
+    {plan.state === 'pending' && feedbackOpen && (
+      <form className="escalation-form" onSubmit={sendFeedback} noValidate>
+        <label htmlFor="plan-feedback">What should the agent change?</label>
+        <textarea id="plan-feedback" autoFocus value={feedback} onChange={(event) => { setFeedback(event.target.value); if (error) setError(''); }} rows={3} placeholder="For example: also cover accounts that use passkeys" aria-invalid={Boolean(error)} aria-describedby={error ? 'feedback-error' : undefined} />
+        {error && <p id="feedback-error" className="form-hint error-text" role="alert">{error}</p>}
+        <div className="approval-actions">
+          <button className="button button-primary" type="submit">Send feedback to agent</button>
+          <button className="button button-quiet" type="button" onClick={() => { setFeedbackOpen(false); setError(''); }}>Cancel</button>
+        </div>
+      </form>
+    )}
+
+    {plan.state === 'approved' && (
+      <AgentProgress title="Delivery progress" steps={[
+        { label: 'Plan approved by you', done: true },
+        { label: `${plan.agent} writes the fix and links a pull request`, done: status.stage === 'Prove', active: status.stage === 'Deliver' },
+        { label: 'Independent tester verifies the fix', active: status.stage === 'Prove' },
+      ]} />
+    )}
+
+    {plan.state !== 'pending' && (
+      <div className="completed-actions">
+        <button className="button button-outline" onClick={() => onOpenIssue(issueId)}>Open in Issues</button>
+        <button className="button button-quiet" onClick={() => ws.actions.resetScenario(issueId)}>Reset scenario</button>
+      </div>
+    )}
   </>;
 }
 
-function IssuesView({ agentState, approvalState, issueFilter, setIssueFilter }: {
-  agentState: AgentState;
-  approvalState: 'pending' | 'approved' | 'changes';
-  issueFilter: string;
-  setIssueFilter: (value: string) => void;
-}) {
-  const [categoryFilter, setCategoryFilter] = useState('All categories');
-  const [search, setSearch] = useState('');
-  const [selectedId, setSelectedId] = useState('#388');
-  const statusFor = (issue: typeof issues[number]) => {
-    if (issue.id === '#388') return agentState === 'waiting' ? 'Needs your input' : agentState === 'paused' ? 'Kept paused' : agentState === 'takenOver' ? 'Human-owned' : 'Guidance recorded';
-    if (issue.id === '#402') return approvalState === 'pending' ? 'Awaiting approval' : approvalState === 'approved' ? 'Approved (demo)' : 'Changes requested';
-    return issue.status;
-  };
-  const ownerFor = (issue: typeof issues[number]) => issue.id === '#388' && agentState === 'takenOver' ? 'Jordan D. (you)' : issue.agent;
-  const statuses = ['All issues', 'Needs your input', 'Kept paused', 'Human-owned', 'Guidance recorded', 'Awaiting approval', 'Approved (demo)', 'Changes requested', 'In review', 'Open'];
-  const categories = ['All categories', ...Array.from(new Set(issues.map((issue) => issue.category)))];
-  const filteredIssues = issues.filter((issue) => {
-    const status = statusFor(issue);
-    const matchesStatus = issueFilter === 'All issues' || issueFilter === 'All statuses' || status === issueFilter || (issueFilter === 'In review' && status === 'In review') || (issueFilter === 'Open' && status === 'Open');
-    const matchesCategory = categoryFilter === 'All categories' || issue.category === categoryFilter;
-    const query = search.trim().toLowerCase();
-    const matchesSearch = !query || `${issue.id} ${issue.title} ${issue.category} ${ownerFor(issue)}`.toLowerCase().includes(query);
-    return matchesStatus && matchesCategory && matchesSearch;
-  });
-  const selectedIssue = issues.find((issue) => issue.id === selectedId);
+/* ------------------------------------------------------------------ */
+/* Issues: tracking                                                    */
+/* ------------------------------------------------------------------ */
+
+function IssuesView({ ws, ui, setUi, onOpenInbox }: { ws: Workspace; ui: IssuesUi; setUi: React.Dispatch<React.SetStateAction<IssuesUi>>; onOpenInbox: (key: string) => void }) {
+  const set = (patch: Partial<IssuesUi>) => setUi((current) => ({ ...current, ...patch }));
+  const rows = issues.map((issue) => ({ issue, status: ws.statusOf(issue.id) }));
+  const statusOptions = ['All statuses', ...Array.from(new Set(rows.map((row) => row.status.label)))];
+  const categories = ['All categories', ...issues.map((issue) => issue.category)];
+  const statusFilter = statusOptions.includes(ui.status) ? ui.status : 'All statuses';
+  const query = ui.search.trim().toLowerCase();
+  const filtered = rows.filter(({ issue, status }) =>
+    (ui.stage === 'All stages' || status.stage === ui.stage)
+    && (statusFilter === 'All statuses' || status.label === statusFilter)
+    && (ui.category === 'All categories' || issue.category === ui.category)
+    && (!query || `${issue.id} ${issue.title} ${issue.category} ${status.owner}`.toLowerCase().includes(query)));
+  const selected = rows.find((row) => row.issue.id === ui.selectedId) ?? rows[0];
+  const log = ws.activity.filter((entry) => entry.issueId === selected.issue.id);
+
   return <>
-    <PageHeader eyebrow="ISSUE TRACKING" title="Issues" description="Track status, priority, category and ownership. Select an issue to inspect its current state and next step." action={<span className="sample-label">SAMPLE ISSUES</span>} />
+    <PageHeader eyebrow="ISSUE TRACKING" title="Issues" description="Track every issue through Ziki’s lifecycle: who owns it, which stage it is in, and what happens next." />
     <div className="issue-controls">
-      <label className="issue-search-label">Search issues<input aria-label="Search issues" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search title, ID, owner…" /></label>
-      <label> Status <select aria-label="Filter by status" value={issueFilter} onChange={(event) => setIssueFilter(event.target.value)}>{statuses.map((status) => <option key={status} value={status}>{status}</option>)}</select></label>
-      <label> Category <select aria-label="Filter by category" value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>{categories.map((category) => <option key={category} value={category}>{category}</option>)}</select></label>
-      <span className="table-caption">{filteredIssues.length} of {issues.length} issues</span>
+      <label className="issue-search-label">Search issues<input value={ui.search} onChange={(event) => set({ search: event.target.value })} placeholder="Search title, ID, owner…" /></label>
+      <label>Stage<select value={ui.stage} onChange={(event) => set({ stage: event.target.value })}>{['All stages', ...stages].map((stage) => <option key={stage}>{stage}</option>)}</select></label>
+      <label>Status<select value={statusFilter} onChange={(event) => set({ status: event.target.value })}>{statusOptions.map((status) => <option key={status}>{status}</option>)}</select></label>
+      <label>Category<select value={ui.category} onChange={(event) => set({ category: event.target.value })}>{categories.map((category) => <option key={category}>{category}</option>)}</select></label>
+      <span className="table-caption" aria-live="polite">{filtered.length} of {issues.length} issues</span>
     </div>
-    <section className="surface issue-table-wrap"><table className="issue-table"><thead><tr><th>ISSUE</th><th>STATUS</th><th>PRIORITY</th><th>OWNER</th></tr></thead><tbody>{filteredIssues.map((issue) => {
-      const status = statusFor(issue);
-      const statusClass = status === 'Needs your input' || status === 'Kept paused' || status === 'Awaiting approval' ? 'waiting-status' : status === 'Human-owned' ? 'human-status' : status === 'Guidance recorded' || status === 'Approved (demo)' ? 'resumed-status' : status === 'Open' ? 'open-status' : status === 'Changes requested' ? 'approval-status' : 'review-status';
-      return <tr key={issue.id} className={selectedId === issue.id ? 'featured-issue-row selected-issue-row' : ''}><td><button className="issue-select-button" onClick={() => setSelectedId(issue.id)} aria-pressed={selectedId === issue.id}><span className="issue-cell"><span className="issue-cell-id">{issue.id}</span><strong>{issue.title}</strong><small>{issue.category}</small></span></button></td><td><span className={`table-status ${statusClass}`}>{status}</span></td><td><span className={`priority-cell ${issue.priority.toLowerCase()}`}><i />{issue.priority}</span></td><td><span className="table-agent"><span className="mini-agent-avatar">{ownerFor(issue).startsWith('Jordan') ? 'JD' : issue.agent === 'ASA3 Solver' ? 'AS' : issue.agent === 'Unassigned' ? '—' : 'ZR'}</span>{ownerFor(issue)}</span></td></tr>;
-    })}</tbody></table>{filteredIssues.length === 0 && <div className="issues-empty"><strong>No matching issues</strong><span>Try another status, category or search term.</span><button className="button button-outline" onClick={() => { setIssueFilter('All issues'); setCategoryFilter('All categories'); setSearch(''); }}>Clear filters</button></div>}</section>
-    {selectedIssue && <section className="surface issue-inspector"><div className="issue-inspector-heading"><div><span className="panel-kicker">ISSUE DETAILS · {selectedIssue.id}</span><h2>{selectedIssue.title}</h2></div><span className={`table-status ${statusFor(selectedIssue) === 'Human-owned' ? 'human-status' : statusFor(selectedIssue) === 'Needs your input' || statusFor(selectedIssue) === 'Awaiting approval' || statusFor(selectedIssue) === 'Kept paused' ? 'waiting-status' : 'review-status'}`}>{statusFor(selectedIssue)}</span></div><div className="issue-detail-grid"><div><small>Priority</small><strong>{selectedIssue.priority}</strong></div><div><small>Category</small><strong>{selectedIssue.category}</strong></div><div><small>Owner</small><strong>{ownerFor(selectedIssue)}</strong></div><div><small>Next step</small><strong>{selectedIssue.id === '#388' ? agentState === 'takenOver' ? 'Human owner follows up outside this demo' : agentState === 'resumed' ? 'Guidance receipt is saved in this browser session' : 'Review the agent question in Inbox' : selectedIssue.id === '#402' ? approvalState === 'pending' ? 'Review the proposal in Inbox' : 'Approval outcome recorded locally' : selectedIssue.status === 'Open' ? 'Triage and assign an owner' : 'Continue issue review'}</strong></div></div><div className="issue-history"><div className="issue-history-heading"><div><span className="panel-kicker">WORK LOG</span><h3>Context & next steps</h3></div><span className="sample-label">ILLUSTRATIVE</span></div><div className="issue-history-step"><span className="issue-history-dot blue-dot" /><div><strong>Issue added to sample workspace</strong><small>Initial report captured for triage · Sample event</small></div></div><div className="issue-history-step"><span className="issue-history-dot" /><div><strong>{selectedIssue.id === '#388' ? 'Agent requested a policy decision' : selectedIssue.id === '#402' ? 'Proposal submitted for human approval' : selectedIssue.status === 'In review' ? 'Issue moved into review' : 'Issue awaiting triage'}</strong><small>{selectedIssue.id === '#388' ? 'Two-factor behavior needs a clear expected outcome' : selectedIssue.id === '#402' ? 'Reviewer should accept the proposal or request changes' : selectedIssue.status === 'In review' ? 'Review findings and confirm the next action' : 'Assign an owner and confirm priority'}</small></div></div><div className="issue-history-step"><span className={`issue-history-dot ${(selectedIssue.id === '#388' && (agentState === 'resumed' || agentState === 'takenOver')) || (selectedIssue.id === '#402' && approvalState !== 'pending') ? 'blue-dot' : ''}"/><div><strong>{selectedIssue.id === '#388' && agentState === 'takenOver' ? 'Human ownership recorded in demo' : selectedIssue.id === '#388' && agentState === 'resumed' ? 'Guidance receipt recorded in demo' : selectedIssue.id === '#402' && approvalState === 'approved' ? 'Approval outcome recorded in demo' : selectedIssue.id === '#402' && approvalState === 'changes' ? 'Changes requested in demo' : 'Next action pending'}</strong><small>{selectedIssue.id === '#388' && agentState === 'waiting' || selectedIssue.id === '#388' && agentState === 'paused' ? 'Open Inbox to respond, take ownership or keep paused' : selectedIssue.id === '#402' && approvalState === 'pending' ? 'Open Inbox to review the proposed guidance' : 'This is local prototype state, not a connected issue tracker'}</small></div></div></div><p className="issue-inspector-note">Issue status mirrors the local Inbox demo state. No real tracker is connected.</p></section>}
+
+    <section className="surface issue-table-wrap">
+      <table className="issue-table">
+        <thead><tr><th>ISSUE</th><th>STAGE</th><th>STATUS</th><th>PRIORITY</th><th>OWNER</th></tr></thead>
+        <tbody>
+          {filtered.map(({ issue, status }) => (
+            <tr key={issue.id} className={selected.issue.id === issue.id ? 'selected-issue-row' : ''}>
+              <td>
+                <button className="issue-select-button" onClick={() => set({ selectedId: issue.id })} aria-pressed={selected.issue.id === issue.id}>
+                  <span className="issue-cell"><span className="issue-cell-id">{issue.id}</span><strong>{issue.title}</strong><small>{issue.category}</small></span>
+                </button>
+              </td>
+              <td><span className="stage-label">{status.stage}</span></td>
+              <td><StatusPill status={status} /></td>
+              <td><span className={`priority-cell ${issue.priority.toLowerCase()}`}><i />{issue.priority}</span></td>
+              <td><span className="table-agent"><span className="mini-agent-avatar">{status.owner.startsWith('Jordan') ? 'JD' : status.owner === 'Unassigned' ? '—' : status.owner.split(' ').map((part) => part[0]).join('').slice(0, 2)}</span>{status.owner}</span></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {filtered.length === 0 && (
+        <div className="issues-empty">
+          <strong>No matching issues</strong>
+          <span>Try another stage, status, category or search term.</span>
+          <button className="button button-outline" onClick={() => set({ search: '', stage: 'All stages', status: 'All statuses', category: 'All categories' })}>Clear filters</button>
+        </div>
+      )}
+    </section>
+
+    <section className="surface issue-inspector" aria-labelledby="inspector-heading">
+      <div className="issue-inspector-heading">
+        <div><span className="panel-kicker">ISSUE DETAILS · {selected.issue.id}</span><h2 id="inspector-heading">{selected.issue.title}</h2></div>
+        <StatusPill status={selected.status} />
+      </div>
+      <Lifecycle current={selected.status.stage} />
+      <div className="issue-detail-grid">
+        <div><small>Priority</small><strong>{selected.issue.priority}</strong></div>
+        <div><small>Category</small><strong>{selected.issue.category}</strong></div>
+        <div><small>Owner</small><strong>{selected.status.owner}</strong></div>
+        <div className={selected.status.inboxKey ? 'next-step-needs' : ''}><small>Next step</small><strong>{selected.status.next}</strong></div>
+      </div>
+      {selected.status.inboxKey && <button className="button button-primary inspector-cta" onClick={() => onOpenInbox(selected.status.inboxKey!)}>Open in Inbox →</button>}
+      <div className="issue-history">
+        <div className="issue-history-heading"><div><span className="panel-kicker">WORK LOG</span><h3>Everything that happened on {selected.issue.id}</h3></div></div>
+        {log.length === 0 ? <p className="empty-activity">No events yet.</p> : (
+          <ol className="issue-history-list">
+            {log.map((entry) => (
+              <li className="issue-history-step" key={entry.id}>
+                <span className={`issue-history-dot ${entry.actor.toLowerCase()}`} aria-hidden="true" />
+                <div><strong><span className="history-actor">{entry.name}</span> {sentence(entry.action)}</strong><small>{entry.actor} · {entry.when}</small></div>
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+    </section>
   </>;
 }
+
+/* ------------------------------------------------------------------ */
+/* Ranking: contribution points                                         */
+/* ------------------------------------------------------------------ */
 
 function RankingView() {
-  const ranking = [
-    { place: '01', name: 'Ziki Reviewer', type: 'Sample agent', points: '1,240', work: '8 reviewed issues', initials: 'ZR', color: 'lavender' },
-    { place: '02', name: 'Jordan D.', type: 'Sample human', points: '980', work: '6 decisions & reviews', initials: 'JD', color: 'blue' },
-    { place: '03', name: 'ASA3 Solver', type: 'Sample agent', points: '760', work: '5 issue contributions', initials: 'AS', color: 'mint' },
-    { place: '04', name: 'Mina K.', type: 'Sample human', points: '540', work: '3 issue reports', initials: 'MK', color: 'peach' },
-  ];
+  const top = ranking[0].points;
+  const humanPoints = ranking.filter((person) => person.type === 'Human').reduce((sum, person) => sum + person.points, 0);
+  const agentPoints = ranking.filter((person) => person.type === 'Agent').reduce((sum, person) => sum + person.points, 0);
   return <>
-    <PageHeader eyebrow="CONTRIBUTIONS · DEMONSTRATION DATA" title="Ranking" description="A sample view of human and agent contributions. These figures are illustrative, not live scores." action={<span className="period-chip">Sample period · This week</span>} />
-    <div className="ranking-summary"><div className="surface rank-highlight"><span className="rank-cup">↗</span><div><small>TOP SAMPLE CONTRIBUTOR</small><strong>Ziki Reviewer</strong><span>1,240 demonstration points</span></div><span className="rank-place">#1</span></div><div className="surface rank-highlight"><span className="rank-cup human-cup">✦</span><div><small>HUMAN CONTRIBUTIONS</small><strong>1,520 points</strong><span>Across sample decisions and reports</span></div></div></div>
-    <section className="surface ranking-table"><div className="panel-heading"><div><span className="panel-kicker">NORTHSTAR STUDIO</span><h2>Contribution board</h2></div><span className="sample-label">SAMPLE DATA</span></div>{ranking.map((person) => <div className="ranking-row" key={person.place}><span className="ranking-place">{person.place}</span><span className={`ranking-avatar ${person.color}`}>{person.initials}</span><span className="ranking-person"><strong>{person.name}</strong><small>{person.type} · {person.work}</small></span><span className="ranking-points"><b>{person.points}</b><small>points</small></span><div className="ranking-progress" aria-label={`${person.name}: ${Math.round((Number(person.points.replace(',', '')) / 1240) * 100)} percent of top sample score`}><span style={{ width: `${(Number(person.points.replace(',', '')) / 1240) * 100}%` }} /></div></div>)}<div className="ranking-footnote">Points and rankings are fictional demonstration data and do not reflect actual Ziki activity.</div></section>
-  </>;
-}
-
-function ActivityView({ activity }: { activity: ActivityEntry[] }) {
-  const [actorFilter, setActorFilter] = useState('All actors');
-  const [query, setQuery] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('All events');
-  const filteredActivity = activity.filter((item) => {
-    const actorMatch = actorFilter === 'All actors' || item.actor === actorFilter;
-    const category = item.action.toLowerCase().includes('approv') || item.action.toLowerCase().includes('proposal') || item.action.toLowerCase().includes('changes') ? 'Approvals' : item.action.toLowerCase().includes('paused') || item.action.toLowerCase().includes('take responsibility') || item.action.toLowerCase().includes('escalation') || item.action.toLowerCase().includes('responded') ? 'Human handoff' : 'Issue work';
-    const categoryMatch = categoryFilter === 'All events' || category === categoryFilter;
-    const searchMatch = !query.trim() || `${item.name} ${item.action} ${item.issue}`.toLowerCase().includes(query.trim().toLowerCase());
-    return actorMatch && categoryMatch && searchMatch;
-  });
-  return <>
-    <PageHeader eyebrow="ATTRIBUTED AUDIT TRAIL" title="Activity" description="Follow the timeline of sample agent events and the decisions made in this browser session." action={<span className="activity-counter"><span /> Local demo feed</span>} />
-    <section className="surface activity-feed activity-feed-full"><div className="feed-heading"><div><span className="panel-kicker">WORKSPACE TIMELINE</span><h2>Recent events</h2><p className="activity-feed-description">Every entry names the actor, action, affected issue and whether it is sample or local.</p></div><span className="sample-label">SAMPLE + LOCAL</span></div>
-      <div className="activity-filters"><label>Search timeline<input aria-label="Search activity" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search actor, action or issue…" /></label><label>Actor<select aria-label="Filter by actor" value={actorFilter} onChange={(event) => setActorFilter(event.target.value)}><option>All actors</option><option>Human</option><option>Agent</option><option>System</option></select></label><label>Event type<select aria-label="Filter by event type" value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option>All events</option><option>Human handoff</option><option>Approvals</option><option>Issue work</option></select></label><span className="table-caption">{filteredActivity.length} events</span></div>
-      <ActivityList items={filteredActivity} />
+    <PageHeader eyebrow="CONTRIBUTIONS" title="Ranking" description="Ziki awards points only for validated work: confirmed reports, independent review verdicts, and fixes that pass testing. These figures are sample data." />
+    <div className="ranking-summary">
+      <div className="surface rank-highlight"><span className="rank-cup" aria-hidden="true">✳</span><div><small>AGENT CONTRIBUTIONS</small><strong>{agentPoints.toLocaleString()} points</strong><span>Validated fixes by sample agents</span></div></div>
+      <div className="surface rank-highlight"><span className="rank-cup human-cup" aria-hidden="true">✦</span><div><small>HUMAN CONTRIBUTIONS</small><strong>{humanPoints.toLocaleString()} points</strong><span>Reports and review verdicts</span></div></div>
+    </div>
+    <section className="surface ranking-table" aria-labelledby="board-heading">
+      <div className="panel-heading"><div><span className="panel-kicker">NORTHSTAR STUDIO · SAMPLE PERIOD</span><h2 id="board-heading">Contribution board</h2></div></div>
+      {ranking.map((person, index) => {
+        const percent = Math.round((person.points / top) * 100);
+        return (
+          <div className="ranking-row" key={person.name}>
+            <span className="ranking-place">{String(index + 1).padStart(2, '0')}</span>
+            <span className={`ranking-avatar ${person.color}`}>{person.initials}</span>
+            <span className="ranking-person">
+              <strong>{person.name} <span className={`actor-tag ${person.type.toLowerCase()}`}>{person.type}</span></strong>
+              <small>{person.role} · {person.work}</small>
+              <span className="ranking-progress" role="img" aria-label={`${percent}% of the top score`}><span style={{ width: `${percent}%` }} /></span>
+            </span>
+            <span className="ranking-points"><b>{person.points.toLocaleString()}</b><small>points</small></span>
+          </div>
+        );
+      })}
+      <div className="ranking-footnote">Sample figures. Real Ziki points are recorded in an append-only ledger and vary by project rules.</div>
     </section>
-    <p className="activity-disclaimer">Initial entries are fictional sample events. New human actions are recorded locally and disappear when the page reloads. Nothing is streamed from a live system.</p>
   </>;
 }
 
-function ActivityList({ items, compact = false }: { items: ActivityEntry[]; compact?: boolean }) {
-  if (items.length === 0) return <p className="empty-activity">No local activity yet. Your choices in Inbox and Issues will appear here.</p>;
-  return <div className={`activity-list ${compact ? 'compact' : ''}`}>{items.map((item) => <article className="activity-entry" key={item.id}><span className={`activity-actor-icon ${item.actor.toLowerCase()}`}>{item.actor === 'Agent' ? '✳' : item.actor === 'Human' ? item.name.split(' ').map((part) => part[0]).join('').slice(0, 2) : 'i'}</span><span className="activity-entry-copy"><span className="activity-action"><strong>{item.name}</strong> {item.action}</span><span className="activity-issue-link">{item.issue}</span></span><span className={`actor-tag ${item.actor.toLowerCase()}`}>{item.actor}</span><time>{item.when}</time></article>)}</div>;
+/* ------------------------------------------------------------------ */
+/* Activity: attributed timeline                                       */
+/* ------------------------------------------------------------------ */
+
+const eventTypes: EventType[] = ['Handoff', 'Approval', 'Agent work', 'Status change', 'Issue work'];
+
+function ActivityView({ activity, onOpenIssue }: { activity: ActivityEntry[]; onOpenIssue: (id: string) => void }) {
+  const [actor, setActor] = useState('All actors');
+  const [type, setType] = useState('All events');
+  const [query, setQuery] = useState('');
+  const q = query.trim().toLowerCase();
+  const filtered = activity.filter((item) =>
+    (actor === 'All actors' || item.actor === actor)
+    && (type === 'All events' || item.type === type)
+    && (!q || `${item.name} ${item.action} ${item.issueId} ${issueById(item.issueId).shortTitle}`.toLowerCase().includes(q)));
+  const sessionCount = activity.filter((item) => !item.sample).length;
+
+  return <>
+    <PageHeader eyebrow="ATTRIBUTED AUDIT TRAIL" title="Activity" description="Every action by a person, an agent or Ziki itself, newest first. Watch agents respond to your decisions here." action={<span className="activity-counter"><span aria-hidden="true" /> {sessionCount} this session</span>} />
+    <section className="surface activity-feed activity-feed-full">
+      <div className="activity-filters">
+        <label>Search timeline<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search actor, action or issue…" /></label>
+        <label>Actor<select value={actor} onChange={(event) => setActor(event.target.value)}>{['All actors', 'Human', 'Agent', 'System'].map((option) => <option key={option}>{option}</option>)}</select></label>
+        <label>Event type<select value={type} onChange={(event) => setType(event.target.value)}>{['All events', ...eventTypes].map((option) => <option key={option}>{option}</option>)}</select></label>
+        <span className="table-caption" aria-live="polite">{filtered.length} events</span>
+      </div>
+      {filtered.length === 0 ? (
+        <div className="issues-empty"><strong>No matching events</strong><span>Try another actor, event type or search term.</span><button className="button button-outline" onClick={() => { setActor('All actors'); setType('All events'); setQuery(''); }}>Clear filters</button></div>
+      ) : (
+        <div className="activity-list">
+          {filtered.map((item) => (
+            <article className={`activity-entry ${item.sample ? '' : 'session-entry'}`} key={item.id}>
+              <span className={`activity-actor-icon ${item.actor.toLowerCase()}`} aria-hidden="true">{item.actor === 'Agent' ? '✳' : item.actor === 'System' ? 'z' : item.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}</span>
+              <span className="activity-entry-copy">
+                <span className="activity-action"><strong>{item.name}</strong> {sentence(item.action)}</span>
+                <button className="activity-issue-link" onClick={() => onOpenIssue(item.issueId)}>{item.issueId} · {issueById(item.issueId).shortTitle}</button>
+              </span>
+              <span className="activity-meta"><span className={`actor-tag ${item.actor.toLowerCase()}`}>{item.actor}</span><span className="event-type">{item.type}</span></span>
+              <time>{item.when}</time>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  </>;
 }
 
 createRoot(document.getElementById('root')!).render(
